@@ -56,6 +56,6 @@ func Set(root, cacheDir, name string) error {
 	if err != nil {
 		return err
 	}
-	prepareErr := sources.Prepare(root, cacheDir, server.Env(cacheDir, scriptPath), true)
+	prepareErr := sources.Prepare(root, scriptPath, server.Env(cacheDir, scriptPath))
 	return errors.Join(prepareErr, server.Stop(cacheDir))
 }

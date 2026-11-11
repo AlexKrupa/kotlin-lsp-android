@@ -84,6 +84,7 @@ Files in `<cache root>/<key>/`:
 
 | File | Content |
 | --- | --- |
+| `lock` | Lock that lets clients that start at the same time share one server |
 | `port` | TCP port of the server |
 | `pid` | Process ID of the server |
 | `server.log` | Log of the server |

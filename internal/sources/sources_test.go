@@ -50,42 +50,26 @@ func fakeGradlew(t *testing.T, root, body string) {
 	}
 }
 
-func TestPrepareSkipsWhenFileExists(t *testing.T) {
-	root, cacheDir := t.TempDir(), t.TempDir()
-	marker := filepath.Join(root, "marker")
-	fakeGradlew(t, root, "touch "+marker)
+func TestExistsReportsWorkspaceJson(t *testing.T) {
+	cacheDir := t.TempDir()
+	if Exists(cacheDir) {
+		t.Fatal("Exists = true with no workspace.json")
+	}
+
 	writeWorkspaceJson(t, cacheDir)
 
-	if err := Prepare(root, cacheDir, os.Environ(), false); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("gradlew ran although workspace.json exists")
-	}
-}
-
-func TestPrepareRunsWithFileWhenForced(t *testing.T) {
-	root, cacheDir := t.TempDir(), t.TempDir()
-	marker := filepath.Join(root, "marker")
-	fakeGradlew(t, root, "touch "+marker)
-	writeWorkspaceJson(t, cacheDir)
-
-	if err := Prepare(root, cacheDir, os.Environ(), true); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatal("gradlew did not run although force is set")
+	if !Exists(cacheDir) {
+		t.Fatal("Exists = false with a workspace.json")
 	}
 }
 
 func TestPrepareRunsGradlewWithScriptAndEnv(t *testing.T) {
-	root, cacheDir := t.TempDir(), t.TempDir()
+	root := t.TempDir()
+	scriptPath := filepath.Join(t.TempDir(), "script.gradle")
 	report := filepath.Join(root, "report")
 	fakeGradlew(t, root, `echo "$PWD|$*|$SOME_VARIABLE" > `+report)
 
-	if err := Prepare(root, cacheDir, append(os.Environ(), "SOME_VARIABLE=value"), false); err != nil {
+	if err := Prepare(root, scriptPath, append(os.Environ(), "SOME_VARIABLE=value")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,7 +78,7 @@ func TestPrepareRunsGradlewWithScriptAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolvedRoot, _ := filepath.EvalSymlinks(root)
-	want := resolvedRoot + "|-q -I " + filepath.Join(cacheDir, "lsp-library-sources.gradle") + " lspLibrarySources|value\n"
+	want := resolvedRoot + "|-q -I " + scriptPath + " lspLibrarySources|value\n"
 	if string(content) != want {
 		t.Fatalf("gradlew call = %q, want %q", content, want)
 	}
@@ -103,7 +87,7 @@ func TestPrepareRunsGradlewWithScriptAndEnv(t *testing.T) {
 func TestPrepareReportsMissingGradlew(t *testing.T) {
 	root := t.TempDir()
 
-	err := Prepare(root, t.TempDir(), os.Environ(), false)
+	err := Prepare(root, filepath.Join(t.TempDir(), "script.gradle"), os.Environ())
 
 	if err == nil || !strings.Contains(err.Error(), root) {
 		t.Fatalf("error = %v, want an error that names %s", err, root)
@@ -114,7 +98,7 @@ func TestPrepareReportsFailedGradlew(t *testing.T) {
 	root := t.TempDir()
 	fakeGradlew(t, root, "exit 3")
 
-	err := Prepare(root, t.TempDir(), os.Environ(), false)
+	err := Prepare(root, filepath.Join(t.TempDir(), "script.gradle"), os.Environ())
 
 	if err == nil || !strings.Contains(err.Error(), root) {
 		t.Fatalf("error = %v, want an error that names %s", err, root)
@@ -125,7 +109,7 @@ func TestFailedPrepareLeavesNoJsonProject(t *testing.T) {
 	root, cacheDir := t.TempDir(), t.TempDir()
 	fakeGradlew(t, root, "exit 3")
 
-	Prepare(root, cacheDir, os.Environ(), false)
+	Prepare(root, filepath.Join(cacheDir, "script.gradle"), os.Environ())
 	projects := Projects(root, cacheDir)
 
 	if len(projects) != 1 || projects[0].Type != "gradle" {

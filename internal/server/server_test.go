@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func readFile(t *testing.T, path string) string {
 
 func ensure(t *testing.T, cacheDir string) net.Conn {
 	t.Helper()
-	conn, err := Ensure(os.TempDir(), cacheDir, os.Environ())
+	conn, err := Ensure(os.TempDir(), cacheDir, os.Environ(), func() {})
 	if err != nil {
 		t.Fatalf("Ensure returned error: %v", err)
 	}
@@ -105,13 +106,14 @@ func TestEnsureReusesRunningServer(t *testing.T) {
 func TestEnsureStartsOneServerForConcurrentClients(t *testing.T) {
 	cacheDir := newCacheDir(t)
 	var wait sync.WaitGroup
+	var prepareCount atomic.Int32
 	errs := make(chan error, 5)
 
 	for range 5 {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			conn, err := Ensure(os.TempDir(), cacheDir, os.Environ())
+			conn, err := Ensure(os.TempDir(), cacheDir, os.Environ(), func() { prepareCount.Add(1) })
 			if err != nil {
 				errs <- err
 				return
@@ -128,13 +130,16 @@ func TestEnsureStartsOneServerForConcurrentClients(t *testing.T) {
 	if starts := strings.Count(readFile(t, filepath.Join(cacheDir, "starts")), "\n"); starts != 1 {
 		t.Fatalf("server starts = %d, want 1", starts)
 	}
+	if got := prepareCount.Load(); got != 1 {
+		t.Fatalf("prepare calls = %d, want 1", got)
+	}
 }
 
 func TestEnsurePassesEnvironment(t *testing.T) {
 	cacheDir := newCacheDir(t)
 	t.Setenv("KOTLIN_LSP_TEST_PARENT", "1")
 
-	conn, err := Ensure(os.TempDir(), cacheDir, []string{"KOTLIN_LSP_TEST_VALUE=a b"})
+	conn, err := Ensure(os.TempDir(), cacheDir, []string{"KOTLIN_LSP_TEST_VALUE=a b"}, func() {})
 	if err != nil {
 		t.Fatalf("Ensure returned error: %v", err)
 	}
@@ -161,7 +166,7 @@ func TestEnsureFailsAfterTimeout(t *testing.T) {
 	startTimeout = 2 * time.Second
 	t.Cleanup(func() { startTimeout = defaultTimeout })
 
-	_, err := Ensure(os.TempDir(), cacheDir, append(os.Environ(), "FAKE_SERVER_SILENT=1"))
+	_, err := Ensure(os.TempDir(), cacheDir, append(os.Environ(), "FAKE_SERVER_SILENT=1"), func() {})
 
 	if err == nil {
 		t.Fatal("Ensure returned no error")

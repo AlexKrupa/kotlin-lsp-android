@@ -82,7 +82,7 @@ func fakeGradlew(t *testing.T, root, body string) {
 func startServer(t *testing.T, root, cacheDir string) string {
 	t.Helper()
 	scriptPath := filepath.Join(cacheDir, "lsp-library-sources.gradle")
-	conn, err := server.Ensure(root, cacheDir, server.Env(cacheDir, scriptPath))
+	conn, err := server.Ensure(root, cacheDir, server.Env(cacheDir, scriptPath), func() {})
 	if err != nil {
 		t.Fatal(err)
 	}

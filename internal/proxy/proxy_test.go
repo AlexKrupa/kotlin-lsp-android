@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 
 func TestProxyRewritesInitializeAndCopiesBothWays(t *testing.T) {
 	cacheDir := t.TempDir()
-	conn, err := server.Ensure(os.TempDir(), cacheDir, os.Environ())
+	conn, err := server.Ensure(os.TempDir(), cacheDir, os.Environ(), func() {})
 	if err != nil {
 		t.Fatalf("Ensure returned error: %v", err)
 	}

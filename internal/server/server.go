@@ -68,10 +68,8 @@ func appendOption(inherited, option string) string {
 	return inherited + " " + option
 }
 
-// Ensure returns a connection to the server of root. If no server listens, it starts one with
-// env. A lock on <cacheDir>/lock makes sure that clients which start at the same time share
-// one server.
-func Ensure(root, cacheDir string, env []string) (net.Conn, error) {
+// The lock of Ensure makes clients that start at the same time share one server and one prepare.
+func Ensure(root, cacheDir string, env []string, prepare func()) (net.Conn, error) {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create cache folder %s: %w", cacheDir, err)
 	}
@@ -89,6 +87,7 @@ func Ensure(root, cacheDir string, env []string) (net.Conn, error) {
 	if conn, err := connect(cacheDir); err == nil {
 		return conn, nil
 	}
+	prepare()
 	return start(root, cacheDir, env)
 }
 

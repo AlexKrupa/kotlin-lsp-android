@@ -26,9 +26,6 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) > 1 && os.Args[1] == "variant" {
-		return runVariant(os.Args[2:])
-	}
 	if len(os.Args) == 3 && os.Args[1] == "download" {
 		return download.Run(os.Args[2])
 	}
@@ -41,16 +38,24 @@ func run() error {
 		return err
 	}
 	cacheDir := root.CacheDir(rootPath)
+	if len(os.Args) > 1 && os.Args[1] == "variant" {
+		return runVariant(rootPath, cacheDir, os.Args[2:])
+	}
 	scriptPath, err := initscript.Write(cacheDir)
 	if err != nil {
 		return err
 	}
 	env := server.Env(cacheDir, scriptPath)
-	// The server starts without library sources when this run fails.
-	if err := sources.Prepare(rootPath, cacheDir, env, false); err != nil {
-		fmt.Fprintf(os.Stderr, "kotlin-lsp-android: library sources: %v\n", err)
+	prepare := func() {
+		if sources.Exists(cacheDir) {
+			return
+		}
+		// If this run fails, the server starts without library sources.
+		if err := sources.Prepare(rootPath, scriptPath, env); err != nil {
+			fmt.Fprintf(os.Stderr, "kotlin-lsp-android: library sources: %v\n", err)
+		}
 	}
-	conn, err := server.Ensure(rootPath, cacheDir, env)
+	conn, err := server.Ensure(rootPath, cacheDir, env, prepare)
 	if err != nil {
 		return err
 	}
@@ -60,16 +65,7 @@ func run() error {
 	return proxy.Run(os.Stdin, os.Stdout, conn, sources.Projects(rootPath, cacheDir))
 }
 
-func runVariant(args []string) error {
-	dir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-	rootPath, err := root.Find(dir)
-	if err != nil {
-		return err
-	}
-	cacheDir := root.CacheDir(rootPath)
+func runVariant(rootPath, cacheDir string, args []string) error {
 	switch {
 	case len(args) == 1 && args[0] == "list":
 		names, err := variant.List(cacheDir)

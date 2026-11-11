@@ -9,8 +9,7 @@ import (
 	"path/filepath"
 )
 
-// FileName is the name of the script in the cache folder.
-const FileName = "lsp-library-sources.gradle"
+const fileName = "lsp-library-sources.gradle"
 
 //go:embed lsp-library-sources.gradle
 var script []byte
@@ -18,7 +17,7 @@ var script []byte
 // Write puts the script in cacheDir and returns its path. A file with the same content stays as
 // it is, so that its modification time does not change for Gradle.
 func Write(cacheDir string) (string, error) {
-	path := filepath.Join(cacheDir, FileName)
+	path := filepath.Join(cacheDir, fileName)
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, script) {
 		return path, nil
 	}

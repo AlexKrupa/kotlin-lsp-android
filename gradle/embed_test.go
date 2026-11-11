@@ -51,7 +51,7 @@ func TestWriteKeepsFileWithSameContent(t *testing.T) {
 
 func TestWriteReplacesChangedFile(t *testing.T) {
 	cacheDir := t.TempDir()
-	path := filepath.Join(cacheDir, FileName)
+	path := filepath.Join(cacheDir, fileName)
 	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
