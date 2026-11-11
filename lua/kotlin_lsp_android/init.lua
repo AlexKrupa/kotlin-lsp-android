@@ -66,6 +66,13 @@ local location_methods = {
 -- `variant set` in any Neovim instance.
 local server_closed_exit_code = 3
 
+-- A server that crashes at each start would get a new Gradle import at each restart. Over the
+-- limit, Neovim shows its warning for the exit code.
+local restart_limit = 3
+local restart_window_ms = 10 * 60 * 1000
+---@type table<string, integer[]> restart times of each root, in milliseconds
+local restart_times_by_root = {}
+
 ---@param dispatchers vim.lsp.rpc.Dispatchers
 ---@param config vim.lsp.ClientConfig
 function M.cmd(dispatchers, config)
@@ -81,6 +88,15 @@ function M.cmd(dispatchers, config)
     if code ~= server_closed_exit_code then
       return on_exit(code, signal)
     end
+    local now_ms = vim.uv.now()
+    local restart_times = vim.tbl_filter(function(time_ms)
+      return now_ms - time_ms < restart_window_ms
+    end, restart_times_by_root[config.root_dir] or {})
+    if #restart_times >= restart_limit then
+      return on_exit(code, signal)
+    end
+    table.insert(restart_times, now_ms)
+    restart_times_by_root[config.root_dir] = restart_times
     -- The buffers must be read now: the exit detaches them.
     local client = find_client()
     local buffers = client and vim.tbl_keys(client.attached_buffers) or {}

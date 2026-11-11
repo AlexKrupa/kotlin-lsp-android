@@ -109,7 +109,9 @@ They extract a sources jar to the Neovim cache folder.
 
 After `set`, all Neovim instances of the root reconnect to a new server. The plugin shows this
 message first. When the server stops, each proxy exits with code 3. Then `cmd` starts the
-`kotlin_lsp` client again, with the same buffers. Other LSP clients lose the connection.
+`kotlin_lsp` client again, with the same buffers. Other LSP clients lose the connection. After 3
+restarts of a root in 10 minutes, `cmd` does not start the client again, and Neovim shows a warning
+for exit code 3. If the server crashes at each start, this limit stops a loop of Gradle imports.
 
 ## Files
 

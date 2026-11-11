@@ -113,6 +113,39 @@ assert(#vim.lsp.get_clients({ name = 'kotlin_lsp' }) == 1, 'more than one kotlin
 local variant = vim.fn.readfile(bin_dir .. '/variant')[1]
 assert(variant == 'prodDebug', ('variant = %q, want "prodDebug"'):format(variant))
 
+local warnings = {}
+local notify = vim.notify
+vim.notify = function(message, level)
+  if level == vim.log.levels.WARN then
+    table.insert(warnings, message)
+  end
+  return notify(message, level)
+end
+
+local function crash_server()
+  local result = vim.system({ 'sh', '-c', 'kill $(cat servers) && : > servers' }, { cwd = bin_dir, text = true }):wait()
+  assert(result.code == 0, 'kill failed: ' .. result.stderr)
+end
+
+-- A server that crashes again and again gets 3 restarts in a time window, with the variant change.
+for _ = 1, 2 do
+  local crashed_client = assert(client_of_buffer())
+  crash_server()
+  assert(vim.wait(10000, function()
+    local client = client_of_buffer()
+    return client ~= nil and client.id ~= crashed_client.id and client.initialized
+  end), 'no restart after a crash')
+end
+crash_server()
+assert(vim.wait(5000, function()
+  return #vim.lsp.get_clients({ name = 'kotlin_lsp' }) == 0
+end), 'the client runs after the crash')
+vim.wait(1000)
+assert(#vim.lsp.get_clients({ name = 'kotlin_lsp' }) == 0, 'a fourth restart in the time window')
+assert(vim.iter(warnings):any(function(message)
+  return message:find('exit code 3', 1, true) ~= nil
+end), ('warnings = %s, want one about exit code 3'):format(vim.inspect(warnings)))
+
 for _, client in ipairs(vim.lsp.get_clients()) do
   client:stop(true)
 end
