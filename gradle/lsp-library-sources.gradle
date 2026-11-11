@@ -32,7 +32,6 @@ class LspFiles {
     }
 }
 
-// Libraries, SDKs, and Gradle APIs are maps: name to root kind to paths.
 class LspRoots {
     static Map<String, Map<String, Set<String>>> empty() {
         return new TreeMap<String, Map<String, Set<String>>>()

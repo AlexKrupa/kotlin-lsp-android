@@ -23,5 +23,51 @@ local written, message = pcall(vim.cmd.write)
 assert(not written, ':write succeeded')
 assert(tostring(message):find('read-only', 1, true), (':write error = %q, want it to contain "read-only"'):format(message))
 
+-- An in-process server that answers `decompile` with a stub.
+local function fake_server(dispatchers)
+  local request_id = 0
+  local closing = false
+  return {
+    request = function(method, params, callback)
+      request_id = request_id + 1
+      if method == 'initialize' then
+        callback(nil, { capabilities = vim.empty_dict() })
+      elseif method == 'workspace/executeCommand' and params.command == 'decompile' then
+        callback(nil, { code = 'class C', language = 'kotlin' })
+      else
+        callback(nil, vim.NIL)
+      end
+      return true, request_id
+    end,
+    notify = function(method)
+      if method == 'exit' then
+        closing = true
+        dispatchers.on_exit(0, 0)
+      end
+      return true
+    end,
+    is_closing = function()
+      return closing
+    end,
+    terminate = function()
+      closing = true
+    end,
+  }
+end
+
+vim.fn.writefile({ 'class A' }, work_dir .. '/A.kt')
+vim.cmd.edit(vim.fn.fnameescape(work_dir .. '/A.kt'))
+local client_id = assert(vim.lsp.start({ name = 'kotlin_lsp', cmd = fake_server, root_dir = work_dir }))
+assert(vim.wait(5000, function()
+  return vim.lsp.get_client_by_id(client_id).initialized
+end), 'the fake kotlin_lsp client did not initialize')
+
+vim.cmd.edit(vim.fn.fnameescape(('jar://%s!/a/C.class'):format(jar_path)))
+
+local stub = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+assert(stub == 'class C', ('buffer text = %q, want "class C"'):format(stub))
+assert(vim.bo.filetype == 'kotlin', ('filetype = %q, want "kotlin"'):format(vim.bo.filetype))
+
+vim.lsp.get_client_by_id(client_id):stop(true)
 vim.fn.delete(work_dir, 'rf')
 print 'jar_spec: ok'

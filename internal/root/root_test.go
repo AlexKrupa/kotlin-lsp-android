@@ -66,18 +66,18 @@ func TestFindFailsWithNoMarker(t *testing.T) {
 
 func TestKeyMatchesShellWrapper(t *testing.T) {
 	// printf %s /Users/x/src/oss/nowinandroid | shasum -a 256, first 12 characters
-	if got := Key("/Users/x/src/oss/nowinandroid"); got != "695345205bef" {
+	if got := key("/Users/x/src/oss/nowinandroid"); got != "695345205bef" {
 		t.Fatalf("key = %q, want 695345205bef", got)
 	}
 }
 
 func TestKeyOfPathWithSpacesAndUnicode(t *testing.T) {
-	first := Key("/tmp/a b/ąę")
+	first := key("/tmp/a b/ąę")
 
 	if !regexp.MustCompile(`^[0-9a-f]{12}$`).MatchString(first) {
 		t.Fatalf("key = %q, want 12 hex characters", first)
 	}
-	if second := Key("/tmp/a b/ąę"); second != first {
+	if second := key("/tmp/a b/ąę"); second != first {
 		t.Fatalf("key changed: %q then %q", first, second)
 	}
 }
@@ -88,7 +88,7 @@ func TestCacheRootUsesEnvironmentOverride(t *testing.T) {
 	if got := CacheRoot(); got != "/custom/cache" {
 		t.Fatalf("CacheRoot = %q", got)
 	}
-	if got, want := CacheDir("/r"), filepath.Join("/custom/cache", Key("/r")); got != want {
+	if got, want := CacheDir("/r"), filepath.Join("/custom/cache", key("/r")); got != want {
 		t.Fatalf("CacheDir = %q, want %q", got, want)
 	}
 }

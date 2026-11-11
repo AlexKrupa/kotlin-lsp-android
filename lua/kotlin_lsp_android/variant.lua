@@ -1,4 +1,3 @@
--- `:AndroidVariant`: lists and sets the build variant with the `kotlin-lsp variant` commands.
 local M = {}
 
 -- The same executable as the `cmd` of the client.

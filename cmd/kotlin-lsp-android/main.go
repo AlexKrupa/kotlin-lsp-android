@@ -1,7 +1,5 @@
-// Command kotlin-lsp-android connects an LSP client on stdin and stdout to one shared kotlin-lsp
-// server per Gradle root. It ignores its arguments, for example --stdio, except for the first
-// argument "variant": "variant list" and "variant set <name>" select the build variant. The
-// first argument "download <cacheDir>" is for the background process that the proxy starts.
+// Command kotlin-lsp-android connects an LSP client to one shared kotlin-lsp server per Gradle
+// root. It ignores arguments such as --stdio, except the subcommands variant and download.
 package main
 
 import (

@@ -64,8 +64,8 @@ func TestListWithoutFileFails(t *testing.T) {
 
 	_, err := List(cacheDir)
 
-	if err == nil || !strings.Contains(err.Error(), "first import has not run") {
-		t.Fatalf("error = %v, want an error that says the first import has not run", err)
+	if err == nil || !strings.Contains(err.Error(), "init script has not run") {
+		t.Fatalf("error = %v, want an error that says the init script has not run", err)
 	}
 }
 

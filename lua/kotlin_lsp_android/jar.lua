@@ -1,17 +1,16 @@
--- `jar:` buffers: a library symbol that the server gives as `jar:///<jar path>!/<entry path>`.
 local M = {}
 
 local decompiled_by_uri = {}
 
 ---@return vim.lsp.Client?
 local function find_client(root_dir)
-  return vim.iter(vim.lsp.get_clients { name = 'kotlin_lsp' }):find(function(candidate)
+  return vim.iter(vim.lsp.get_clients({ name = 'kotlin_lsp' })):find(function(candidate)
     return candidate.root_dir == root_dir
   end)
 end
 
 ---@return { code: string, language: string }? stub source of a class file from the server
-function M.decompile(uri, root_dir)
+local function decompile(uri, root_dir)
   if decompiled_by_uri[uri] then
     return decompiled_by_uri[uri]
   end
@@ -34,9 +33,9 @@ local function read_jar_entry(uri, root_dir)
     if result.code ~= 0 then
       error(('kotlin_lsp: cannot read %s from %s: %s'):format(entry_path, jar_path, result.stderr))
     end
-    return result.stdout, vim.filetype.match { filename = entry_path }
+    return result.stdout, vim.filetype.match({ filename = entry_path })
   end
-  local decompiled = M.decompile(uri, root_dir)
+  local decompiled = decompile(uri, root_dir)
   if not decompiled then
     error(('kotlin_lsp: the server for %s cannot decompile %s'):format(root_dir, uri))
   end
@@ -45,7 +44,8 @@ end
 
 ---@param get_last_root fun(): string?
 function M.setup(get_last_root)
-  -- `vim.lsp.enable` attaches only to a buffer with no `buftype`, so `BufWriteCmd` stops writes.
+  -- The buffer keeps an empty `buftype`, because `vim.lsp.enable` attaches only to such buffers.
+  -- `BufWriteCmd` stops writes instead.
   local group = vim.api.nvim_create_augroup('kotlin-lsp-jar', { clear = true })
   vim.api.nvim_create_autocmd('BufWriteCmd', {
     pattern = 'jar:///*',

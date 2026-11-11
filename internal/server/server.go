@@ -1,4 +1,3 @@
-// Package server starts one detached kotlin-lsp server per Gradle root and connects to it.
 package server
 
 import (
@@ -28,9 +27,6 @@ const (
 // startTimeout is a variable so that tests can make it shorter.
 var startTimeout = 300 * time.Second
 
-// Env returns the environment of the server: the environment of this process, with the variables
-// that make the server run the init script at its import. Variables that this function sets
-// replace the inherited ones. The options variables keep the inherited value.
 func Env(cacheDir, scriptPath string) []string {
 	set := map[string]string{
 		"ORG_GRADLE_PROJECT_android.onlyEnableUnitTestForTheTestedBuildType": "false",
@@ -141,8 +137,6 @@ func start(root, cacheDir string, env []string) (net.Conn, error) {
 	}
 }
 
-// Stop sends SIGTERM to the server of cacheDir and waits until its port closes.
-// With no server that listens, it does nothing.
 func Stop(cacheDir string) error {
 	port, err := readPort(cacheDir)
 	if err != nil {

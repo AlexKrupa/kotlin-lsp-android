@@ -1,4 +1,3 @@
-// Package variant lists the build variants of a Gradle root and selects one for the server.
 package variant
 
 import (
@@ -15,13 +14,11 @@ import (
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/sources"
 )
 
-// List returns the sorted, unique variant names of all modules, from the variants.json that the
-// init script writes at each import.
 func List(cacheDir string) ([]string, error) {
 	path := filepath.Join(cacheDir, "variants.json")
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: the first import has not run: %w", path, err)
+		return nil, fmt.Errorf("read %s: the init script has not run: %w", path, err)
 	}
 	var file struct {
 		Modules map[string][]string `json:"modules"`
@@ -37,9 +34,7 @@ func List(cacheDir string) ([]string, error) {
 	return slices.Compact(names), nil
 }
 
-// Set selects the variant for the next start of the server: it refreshes the library sources for
-// the variant and stops the running server. The next client starts the server again. The server
-// stops also when the refresh fails, so that its next import applies the variant.
+// Set stops the server also when the refresh fails, so that the next import applies the variant.
 func Set(root, cacheDir, name string) error {
 	names, err := List(cacheDir)
 	if err != nil {

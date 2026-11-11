@@ -1,4 +1,3 @@
-// Package proxy copies LSP messages between a client and a server connection.
 package proxy
 
 import (
@@ -30,6 +29,8 @@ func Run(clientIn io.Reader, clientOut io.Writer, conn net.Conn, projects []lsp.
 
 func copyToServer(clientIn io.Reader, conn net.Conn, projects []lsp.Project) error {
 	reader := bufio.NewReader(clientIn)
+	// Only the first message of a client is the initialize request, so later bodies need no decode.
+	rewritten := false
 	for {
 		body, err := lsp.ReadMessage(reader)
 		if err == io.EOF {
@@ -38,8 +39,11 @@ func copyToServer(clientIn io.Reader, conn net.Conn, projects []lsp.Project) err
 		if err != nil {
 			return fmt.Errorf("read client message: %w", err)
 		}
-		if body, err = lsp.RewriteInitialize(body, projects); err != nil {
-			return err
+		if !rewritten {
+			if body, err = lsp.RewriteInitialize(body, projects); err != nil {
+				return err
+			}
+			rewritten = true
 		}
 		if err := lsp.WriteMessage(conn, body); err != nil {
 			return fmt.Errorf("send client message to server: %w", err)

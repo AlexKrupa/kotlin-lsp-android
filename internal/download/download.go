@@ -1,5 +1,3 @@
-// Package download fetches the SDK and Gradle sources that the init script reports as missing.
-// The server imports them on its next import.
 package download
 
 import (
@@ -24,8 +22,7 @@ import (
 // baseURL is a variable so that tests can point it at a local server.
 var baseURL = "https://services.gradle.org/distributions"
 
-// The sources archive is large and the download runs in the background, so the limit only stops
-// a connection that hangs for ever. A hung download would hold the lock.
+// The long limit only stops a hung connection, which would hold the download lock.
 var client = &http.Client{Timeout: 15 * time.Minute}
 
 type missingSources struct {
@@ -33,8 +30,6 @@ type missingSources struct {
 	GradleVersions   []string `json:"gradleVersions"`
 }
 
-// Start runs `download <cacheDir>` as a detached child process of this executable and returns at
-// once. The child writes to <cache root>/download.log.
 func Start(cacheDir string) error {
 	executable, err := os.Executable()
 	if err != nil {
@@ -182,7 +177,6 @@ func fetchChecksum(url string) (string, error) {
 	return fields[0], nil
 }
 
-// fetchTo writes the body of url to target and returns its SHA-256 digest as hex.
 func fetchTo(target *os.File, url string) (string, error) {
 	body, err := get(url)
 	if err != nil {
@@ -196,8 +190,6 @@ func fetchTo(target *os.File, url string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-// extractSrcMain copies the files that have a src/main path segment from the folder topDir of the
-// archive into targetDir.
 func extractSrcMain(archivePath, topDir, targetDir string) error {
 	reader, err := zip.OpenReader(archivePath)
 	// The stdlib reports names with ".." but still returns a reader. The check below rejects them

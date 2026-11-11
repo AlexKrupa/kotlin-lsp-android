@@ -21,6 +21,7 @@ it with no change.
 - A Gradle wrapper (`gradlew`) in each project root.
 - Neovim 0.11 or later, with `zip` and `unzip` on PATH.
 - Go, to build the binary.
+- The `android` CLI on PATH, for the background download of the Android SDK sources.
 
 ## Install
 
@@ -59,8 +60,8 @@ uses the root of the last Kotlin buffer.
 
 ## Variants
 
-The binary reads the build variants from the first import of the project. Until that import ends,
-`variant list` fails.
+The binary reads the build variants from the first Gradle run of the init script: the separate run
+at the first start, or the server import. Until that run ends, `variant list` fails.
 
 | Command | Effect |
 | --- | --- |
@@ -95,6 +96,7 @@ Files in `<cache root>/<key>/`:
 | `lsp-library-sources.gradle` | The init script that the binary writes at each start |
 | `library-sources/workspace.json` | The libraries with their sources, for the server |
 | `library-sources/fragments/` | The part of `workspace.json` of each Gradle build |
+| `library-sources/fragments/.lock` | Lock for the merge of the fragments |
 | `library-sources/empty/` | An empty content root for the module `lsp-library-sources` |
 | `library-sources/java-sources/` | Copies of the Java files of sources jars that have a top folder, for example `main/` |
 
@@ -117,6 +119,8 @@ Files in `<cache root>/`, shared by all roots:
 ## Tests
 
 Go tests: `go test ./...`
+
+Init script tests, with `ANDROID_HOME` set: `cd gradle-test && ./gradlew test`
 
 Lua tests, with no user config:
 

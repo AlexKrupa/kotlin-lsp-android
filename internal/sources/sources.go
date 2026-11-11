@@ -1,4 +1,3 @@
-// Package sources prepares the library sources of a Gradle root for the server.
 package sources
 
 import (
@@ -34,8 +33,7 @@ func Prepare(root, scriptPath string, env []string) error {
 	return nil
 }
 
-// Projects returns the projects that the proxy adds to the initialize request. The json project
-// is there only when a workspace.json exists: the json project has no content without it.
+// The json project has no content without a workspace.json.
 func Projects(root, cacheDir string) []lsp.Project {
 	projects := []lsp.Project{{Type: "gradle", Path: fileURI(root)}}
 	if !Exists(cacheDir) {

@@ -1,5 +1,3 @@
--- Neovim side of `kotlin-lsp-android`: the client command, the project root, `jar:` buffers, and
--- `:AndroidVariant`.
 local M = {}
 
 -- A library file has no project root. It uses the server of the last Kotlin buffer, which is the

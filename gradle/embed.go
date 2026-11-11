@@ -1,4 +1,3 @@
-// Package initscript embeds the Gradle init script and writes it to the cache folder.
 package initscript
 
 import (
@@ -14,8 +13,7 @@ const fileName = "lsp-library-sources.gradle"
 //go:embed lsp-library-sources.gradle
 var script []byte
 
-// Write puts the script in cacheDir and returns its path. A file with the same content stays as
-// it is, so that its modification time does not change for Gradle.
+// Write keeps a file with the same content, so that Gradle sees no new modification time.
 func Write(cacheDir string) (string, error) {
 	path := filepath.Join(cacheDir, fileName)
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, script) {

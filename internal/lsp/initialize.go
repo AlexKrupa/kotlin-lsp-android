@@ -12,8 +12,6 @@ type Project struct {
 	Path string `json:"path"`
 }
 
-// RewriteInitialize appends projects to initializationOptions.projects of an initialize request.
-// It keeps all other fields. For any other method it returns body with no change.
 func RewriteInitialize(body []byte, projects []Project) ([]byte, error) {
 	var message map[string]json.RawMessage
 	if err := json.Unmarshal(body, &message); err != nil {
@@ -58,7 +56,6 @@ func RewriteInitialize(body []byte, projects []Project) ([]byte, error) {
 	return json.Marshal(message)
 }
 
-// decodeObject returns an empty object for a missing or null value.
 func decodeObject(raw json.RawMessage, name string) (map[string]json.RawMessage, error) {
 	object := map[string]json.RawMessage{}
 	if len(raw) == 0 || string(raw) == "null" {
