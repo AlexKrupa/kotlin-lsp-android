@@ -25,6 +25,8 @@ class LibrarySourcesTest {
     private val testKitDir = File(System.getProperty("testKitDir"), "LibrarySourcesTest")
     /** The version of the wrapper, which TestKit runs. It is a `-bin` distribution with no sources. */
     private val gradleVersion = "9.7.0"
+    /** The Kotlin version in the `lib` folder of that Gradle distribution. */
+    private val gradleKotlinVersion = "2.4.0"
     private val androidHome = requireNotNull(System.getenv("ANDROID_HOME")) {
         "Set ANDROID_HOME to the Android SDK folder"
     }
@@ -496,6 +498,27 @@ class LibrarySourcesTest {
             classes.map { File(it).name }.toSet(),
         )
         assertEquals(setOf(sourceRoot.absolutePath), librarySources(workspace).getValue("Sources: gradle-api-$gradleVersion"))
+    }
+
+    @Test
+    fun attachesCachedSourcesToLibraryJarsOfGradleDistribution() {
+        val projectDir = copyFixture("jvm-only")
+        File(projectDir, "build.gradle.kts").appendText("\ndependencies {\n    implementation(gradleKotlinDsl())\n}\n")
+        val cachedSources = File(
+            testKitDir,
+            "caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/$gradleKotlinVersion/0123abcd/kotlin-stdlib-$gradleKotlinVersion-sources.jar",
+        )
+        writeJar(cachedSources)
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir)
+
+        val name = "Sources: org.jetbrains.kotlin:kotlin-stdlib:$gradleKotlinVersion"
+        val workspace = workspace(outputDir)
+        val classes = libraryClasses(workspace).getValue(name)
+        assertEquals(listOf("kotlin-stdlib-$gradleKotlinVersion.jar"), classes.map { File(it).name })
+        assertTrue(File(classes.single()).parentFile.name == "lib", classes.toString())
+        assertTrue(cachedSources.absolutePath in librarySources(workspace).getValue(name), librarySources(workspace).toString())
     }
 
     @Test

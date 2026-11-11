@@ -124,6 +124,32 @@ abstract class LspLibrarySourcesModuleTask extends DefaultTask {
         libraries.each { coordinate, roots ->
             roots.sources.addAll(variantSources[coordinate] ?: classifierSources[coordinate] ?: [])
         }
+        LspRoots.addAll(libraries, distributionLibraries())
+        return libraries
+    }
+
+    // A library jar of the Gradle distribution, for example the Kotlin stdlib of `kotlin-dsl`, is a
+    // file dependency. The `.properties` file next to it gives its coordinate, so that the merge can
+    // find its sources jar in the Gradle cache.
+    Map distributionLibraries() {
+        def libraries = LspRoots.empty()
+        fileDependencies.files.each { file ->
+            def match = file.name =~ /^(.+?)-\d.*\.jar$/
+            if (!match.matches()) {
+                return
+            }
+            def propertiesFile = new File(file.parentFile, "${match.group(1)}.properties")
+            if (!propertiesFile.isFile()) {
+                return
+            }
+            def properties = new Properties()
+            propertiesFile.withInputStream { properties.load(it) }
+            if (properties.getProperty('jarFile') != file.name || properties.getProperty('alias.group') == null) {
+                return
+            }
+            def coordinate = [properties.getProperty('alias.group'), properties.getProperty('alias.name'), properties.getProperty('alias.version')].join(':')
+            LspRoots.addAll(libraries, [(coordinate): [classes: [file.absolutePath]]])
+        }
         return libraries
     }
 
