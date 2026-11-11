@@ -50,6 +50,13 @@ function M.root_dir(bufnr, on_dir)
   end
 end
 
+local location_methods = {
+  ['textDocument/declaration'] = true,
+  ['textDocument/definition'] = true,
+  ['textDocument/implementation'] = true,
+  ['textDocument/typeDefinition'] = true,
+}
+
 -- The proxy exits with this code when the server closes the connection, for example after
 -- `variant set` in any Neovim instance.
 local server_closed_exit_code = 3
@@ -83,6 +90,20 @@ function M.cmd(dispatchers, config)
     vim.tbl_extend('force', dispatchers, { on_exit = start_again }),
     { cwd = config.root_dir }
   )
+  -- The change is in the RPC client, not in a handler, so that each consumer of locations, for
+  -- example Telescope, gets the sources.
+  local request = rpc.request
+  rpc.request = function(method, params, callback, notify_reply_callback)
+    if not location_methods[method] then
+      return request(method, params, callback, notify_reply_callback)
+    end
+    return request(method, params, function(err, result)
+      -- The search waits for `rg` and `unzip`, which a fast event cannot do.
+      vim.schedule(function()
+        callback(err, err == nil and require('kotlin_lsp_android.sources').to_sources(result, params, config.root_dir) or result)
+      end)
+    end, notify_reply_callback)
+  end
   return rpc
 end
 

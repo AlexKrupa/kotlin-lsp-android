@@ -19,7 +19,7 @@ it with no change.
   `KOTLIN_LSP_SERVER` sets another path.
 - Gradle 9 or later in the projects. With an older Gradle, the projects get no library sources.
 - A Gradle wrapper (`gradlew`) in each project root.
-- Neovim 0.11 or later, with `zip` and `unzip` on PATH.
+- Neovim 0.11 or later, with `zip`, `unzip`, and `rg` on PATH.
 - Go, to build the binary.
 - The `android` CLI on PATH, for the background download of the Android SDK sources.
 
@@ -58,6 +58,11 @@ it with no change.
 root of a buffer. For a library file (a `jar:` buffer, or an Android SDK or Gradle source file), it
 uses the root of the last Kotlin buffer.
 
+Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for its
+jar. An example is the Kotlin stdlib of the Gradle distribution in build logic. Then `cmd` moves
+the location to the declaration in those sources. It extracts a sources jar to the Neovim cache
+folder.
+
 ## Variants
 
 The binary reads the build variants from the first Gradle run of the init script: the separate run
@@ -72,6 +77,11 @@ at the first start, or the server import. Until that run ends, `variant list` fa
 
 The command works in the root of the `kotlin_lsp` client of the current buffer. If the buffer has
 no client, it uses the root of the last Kotlin buffer.
+
+Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for its
+jar. An example is the Kotlin stdlib of the Gradle distribution in build logic. Then `cmd` moves
+the location to the declaration in those sources. It extracts a sources jar to the Neovim cache
+folder.
 
 After `set`, all Neovim instances of the root reconnect to a new server. The plugin shows this
 message first. When the server stops, each proxy exits with code 3. Then `cmd` starts the
@@ -126,5 +136,6 @@ Lua tests, with no user config:
 
 ```sh
 nvim --clean --headless -l tests/jar_spec.lua
+nvim --clean --headless -l tests/sources_spec.lua
 nvim --clean --headless -l tests/variant_spec.lua
 ```
