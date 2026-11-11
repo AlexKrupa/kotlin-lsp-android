@@ -17,10 +17,10 @@ func workspaceJsonPath(cacheDir string) string {
 }
 
 // Prepare runs the init script in a separate Gradle run, so that the first import of the server
-// finds the library sources. With a workspace.json it does nothing. The output of Gradle goes to
-// stderr: stdout is the LSP channel.
-func Prepare(root, cacheDir string, env []string) error {
-	if _, err := os.Stat(workspaceJsonPath(cacheDir)); err == nil {
+// finds the library sources. With a workspace.json it does nothing, unless force is set. The
+// output of Gradle goes to stderr: stdout is the LSP channel.
+func Prepare(root, cacheDir string, env []string, force bool) error {
+	if _, err := os.Stat(workspaceJsonPath(cacheDir)); err == nil && !force {
 		return nil
 	}
 	gradlew := filepath.Join(root, "gradlew")
