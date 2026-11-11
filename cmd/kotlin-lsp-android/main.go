@@ -1,6 +1,7 @@
 // Command kotlin-lsp-android connects an LSP client on stdin and stdout to one shared kotlin-lsp
 // server per Gradle root. It ignores its arguments, for example --stdio, except for the first
-// argument "variant": "variant list" and "variant set <name>" select the build variant.
+// argument "variant": "variant list" and "variant set <name>" select the build variant. The
+// first argument "download <cacheDir>" is for the background process that the proxy starts.
 package main
 
 import (
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 
 	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/download"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/proxy"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/server"
@@ -26,6 +28,9 @@ func main() {
 func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "variant" {
 		return runVariant(os.Args[2:])
+	}
+	if len(os.Args) == 3 && os.Args[1] == "download" {
+		return download.Run(os.Args[2])
 	}
 	dir, err := os.Getwd()
 	if err != nil {
@@ -48,6 +53,9 @@ func run() error {
 	conn, err := server.Ensure(rootPath, cacheDir, env)
 	if err != nil {
 		return err
+	}
+	if err := download.Start(cacheDir); err != nil {
+		fmt.Fprintf(os.Stderr, "kotlin-lsp-android: download sources: %v\n", err)
 	}
 	return proxy.Run(os.Stdin, os.Stdout, conn, sources.Projects(rootPath, cacheDir))
 }
