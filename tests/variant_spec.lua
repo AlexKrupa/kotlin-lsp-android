@@ -9,8 +9,9 @@ local project_dir = work_dir .. '/project'
 vim.fn.mkdir(bin_dir, 'p')
 vim.fn.mkdir(project_dir, 'p')
 
--- A fake server: it answers `initialize` and `shutdown`, and ignores all other messages. It reads
--- with the event loop, so that SIGTERM ends it with exit code 0, like the proxy.
+-- A fake proxy and server: it answers `initialize` and `shutdown`, and ignores all other messages.
+-- It reads with the event loop, so that SIGTERM ends it with exit code 3, like the proxy after the
+-- server stops.
 vim.fn.writefile(vim.split([[
 local function send(id, result)
   local body = vim.json.encode({ jsonrpc = '2.0', id = id, result = result })
@@ -51,7 +52,7 @@ stdin:read_start(function(_, chunk)
   end
 end)
 assert(vim.uv.new_signal()):start('sigterm', function()
-  os.exit(0)
+  os.exit(3)
 end)
 while true do
   vim.wait(60000, function()
@@ -115,8 +116,8 @@ assert(variant == 'prodDebug', ('variant = %q, want "prodDebug"'):format(variant
 for _, client in ipairs(vim.lsp.get_clients()) do
   client:stop(true)
 end
-vim.wait(5000, function()
+assert(vim.wait(5000, function()
   return #vim.lsp.get_clients() == 0
-end)
+end), 'a client started again after a stop with exit code 0')
 vim.fn.delete(work_dir, 'rf')
 print 'variant_spec: ok'

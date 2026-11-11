@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,11 +19,19 @@ import (
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/variant"
 )
 
+// serverClosedExitCode tells the Neovim plugin to start the client again.
+const serverClosedExitCode = 3
+
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "kotlin-lsp-android: %v\n", err)
-		os.Exit(1)
+	err := run()
+	if err == nil {
+		return
 	}
+	fmt.Fprintf(os.Stderr, "kotlin-lsp-android: %v\n", err)
+	if errors.Is(err, proxy.ErrServerClosed) {
+		os.Exit(serverClosedExitCode)
+	}
+	os.Exit(1)
 }
 
 func run() error {

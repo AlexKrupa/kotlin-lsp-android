@@ -49,10 +49,40 @@ function M.root_dir(bufnr, on_dir)
   end
 end
 
+-- The proxy exits with this code when the server closes the connection, for example after
+-- `variant set` in any Neovim instance.
+local server_closed_exit_code = 3
+
 ---@param dispatchers vim.lsp.rpc.Dispatchers
 ---@param config vim.lsp.ClientConfig
 function M.cmd(dispatchers, config)
-  return vim.lsp.rpc.start({ 'kotlin-lsp', '--stdio' }, dispatchers, { cwd = config.root_dir })
+  local rpc
+  local on_exit = dispatchers.on_exit
+  local function start_again(code, signal)
+    if code ~= server_closed_exit_code then
+      return on_exit(code, signal)
+    end
+    -- The buffers must be read now: the exit detaches them.
+    local client = vim.iter(vim.lsp.get_clients({ name = 'kotlin_lsp' })):find(function(candidate)
+      return candidate.rpc == rpc
+    end)
+    local buffers = client and vim.tbl_keys(client.attached_buffers) or {}
+    -- Code 0, because Neovim shows a warning for any other code.
+    on_exit(0, signal)
+    vim.schedule(function()
+      for _, buffer in ipairs(buffers) do
+        if vim.api.nvim_buf_is_loaded(buffer) then
+          vim.lsp.start(config, { bufnr = buffer })
+        end
+      end
+    end)
+  end
+  rpc = vim.lsp.rpc.start(
+    { 'kotlin-lsp', '--stdio' },
+    vim.tbl_extend('force', dispatchers, { on_exit = start_again }),
+    { cwd = config.root_dir }
+  )
+  return rpc
 end
 
 return M

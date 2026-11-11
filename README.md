@@ -72,8 +72,8 @@ The command works in the root of the `kotlin_lsp` client of the current buffer. 
 no client, it uses the root of the last Kotlin buffer.
 
 After `set`, all Neovim instances of the root reconnect to a new server. The plugin shows this
-message first. Then, in this Neovim instance, it starts the `kotlin_lsp` clients of the root again,
-with the same buffers.
+message first. When the server stops, each proxy exits with code 3. Then `cmd` starts the
+`kotlin_lsp` client again, with the same buffers. Other LSP clients lose the connection.
 
 ## Files
 

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -83,5 +84,25 @@ func TestProxyRewritesInitializeAndCopiesBothWays(t *testing.T) {
 	}
 	if err := <-result; err != nil {
 		t.Fatalf("Run returned error: %v", err)
+	}
+}
+
+func TestProxyReportsServerClose(t *testing.T) {
+	cacheDir := t.TempDir()
+	conn, err := server.Ensure(os.TempDir(), cacheDir, os.Environ(), func() {})
+	if err != nil {
+		t.Fatalf("Ensure returned error: %v", err)
+	}
+	clientIn, toProxy := io.Pipe()
+	defer toProxy.Close()
+	result := make(chan error, 1)
+	go func() { result <- Run(clientIn, io.Discard, conn, nil) }()
+
+	if err := server.Stop(cacheDir); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+
+	if err := <-result; !errors.Is(err, ErrServerClosed) {
+		t.Fatalf("Run returned %v, want ErrServerClosed", err)
 	}
 }

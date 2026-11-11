@@ -3,6 +3,7 @@ package proxy
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,8 +11,9 @@ import (
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/lsp"
 )
 
-// Run copies messages in both directions and adds projects to the initialize request.
-// It returns when one side closes, and then closes conn.
+// ErrServerClosed means that the server closed the connection before the client.
+var ErrServerClosed = errors.New("the server closed the connection")
+
 func Run(clientIn io.Reader, clientOut io.Writer, conn net.Conn, projects []lsp.Project) error {
 	defer conn.Close()
 	done := make(chan error, 2)
@@ -21,7 +23,7 @@ func Run(clientIn io.Reader, clientOut io.Writer, conn net.Conn, projects []lsp.
 			done <- fmt.Errorf("copy server messages to client: %w", err)
 			return
 		}
-		done <- nil
+		done <- ErrServerClosed
 	}()
 	return <-done
 }
