@@ -16,6 +16,12 @@ vim.fn.writefile({
   'package kotlin.collections',
   '',
   'public fun <T> emptyList(): List<T> = EmptyList',
+  '',
+  'public fun <T> listOf(element: T): List<T> = java.util.Collections.singletonList(element)',
+  '',
+  'public fun <T> listOf(vararg elements: T): List<T> = elements.asList()',
+  '',
+  'internal object EmptyList : List<Nothing>',
 }, sources_dir .. '/commonMain/kotlin/collections/Collections.kt')
 vim.fn.writefile({
   'package kotlin',
@@ -37,7 +43,7 @@ vim.fn.writefile({
   }),
 }, cache_dir .. '/library-sources/workspace.json')
 
-vim.fn.writefile({ 'val pair: Pair<Int, Int> = TODO()', 'val list = emptyList<Int>()' }, root_dir .. '/A.kt')
+vim.fn.writefile({ 'val pair: Pair<Int, Int> = TODO()', 'val list = emptyList<Int>()', 'val many = listOf(1, 2)' }, root_dir .. '/A.kt')
 vim.cmd.edit(vim.fn.fnameescape(root_dir .. '/A.kt'))
 local document = { uri = vim.uri_from_bufnr(0) }
 local sources = require('kotlin_lsp_android.sources')
@@ -67,6 +73,26 @@ local class_result = sources.to_sources(
   root_dir
 )
 assert_location(class_result, 'commonMain/kotlin/Tuples.kt', 2)
+
+-- The stub of the class file has the vararg overload at line 7 (index 6).
+require('kotlin_lsp_android.jar').decompile = function()
+  local stub = { 'package kotlin.collections', '', 'public final class CollectionsKt {', '', '  public static fun <T> listOf(element: T): kotlin.collections.List<T> { }', '' }
+  table.insert(stub, '  public static fun <T> listOf(vararg elements: T): kotlin.collections.List<T> { }')
+  return { code = table.concat(stub, '\n'), language = 'kotlin' }
+end
+local overload_location = class_location('kotlin/collections/CollectionsKt.class')
+overload_location.range.start.line = 6
+local overload_result = sources.to_sources({ overload_location }, { textDocument = document, position = { line = 2, character = 12 } }, root_dir)
+assert_location(overload_result, 'commonMain/kotlin/collections/Collections.kt', 6)
+
+-- The server knows no library source file, so it finds nothing for a jump from one.
+require('kotlin_lsp_android.jar').setup(function()
+  return root_dir
+end)
+vim.cmd.edit(vim.fn.fnameescape(('jar://%s!/commonMain/kotlin/collections/Collections.kt'):format(sources_jar)))
+local library_document = { uri = vim.uri_from_bufnr(0) }
+local name_result = sources.to_sources({}, { textDocument = library_document, position = { line = 2, character = 40 } }, root_dir)
+assert_location(name_result, 'commonMain/kotlin/collections/Collections.kt', 8)
 
 local other_jar = { uri = 'jar:///other.jar!/a/B.class', range = class_location('a/B.class').range }
 local other_result = sources.to_sources({ other_jar }, { textDocument = document, position = { line = 0, character = 11 } }, root_dir)

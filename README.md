@@ -58,10 +58,17 @@ it with no change.
 root of a buffer. For a library file (a `jar:` buffer, or an Android SDK or Gradle source file), it
 uses the root of the last Kotlin buffer.
 
-Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for its
-jar. An example is the Kotlin stdlib of the Gradle distribution in build logic. Then `cmd` moves
-the location to the declaration in those sources. It extracts a sources jar to the Neovim cache
-folder.
+`cmd` also has workarounds for library locations. They use only the sources in `workspace.json`:
+
+- Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for
+  its jar. An example is the Kotlin stdlib of the Gradle distribution in build logic. Then `cmd`
+  moves the location to the declaration in those sources. For overloads, it compares the signature
+  in the decompiled class file.
+- The server finds nothing for a jump from a library source file. Then `cmd` searches the name: in
+  the imports, the file, the package, and the library. A name from another library goes to the
+  server as a full name.
+
+They extract a sources jar to the Neovim cache folder.
 
 ## Variants
 
@@ -78,10 +85,17 @@ at the first start, or the server import. Until that run ends, `variant list` fa
 The command works in the root of the `kotlin_lsp` client of the current buffer. If the buffer has
 no client, it uses the root of the last Kotlin buffer.
 
-Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for its
-jar. An example is the Kotlin stdlib of the Gradle distribution in build logic. Then `cmd` moves
-the location to the declaration in those sources. It extracts a sources jar to the Neovim cache
-folder.
+`cmd` also has workarounds for library locations. They use only the sources in `workspace.json`:
+
+- Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for
+  its jar. An example is the Kotlin stdlib of the Gradle distribution in build logic. Then `cmd`
+  moves the location to the declaration in those sources. For overloads, it compares the signature
+  in the decompiled class file.
+- The server finds nothing for a jump from a library source file. Then `cmd` searches the name: in
+  the imports, the file, the package, and the library. A name from another library goes to the
+  server as a full name.
+
+They extract a sources jar to the Neovim cache folder.
 
 After `set`, all Neovim instances of the root reconnect to a new server. The plugin shows this
 message first. When the server stops, each proxy exits with code 3. Then `cmd` starts the

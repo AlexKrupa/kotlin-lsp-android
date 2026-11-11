@@ -10,7 +10,7 @@ local function find_client(root_dir)
 end
 
 ---@return { code: string, language: string }? stub source of a class file from the server
-local function decompile(uri, root_dir)
+function M.decompile(uri, root_dir)
   if decompiled_by_uri[uri] then
     return decompiled_by_uri[uri]
   end
@@ -35,7 +35,7 @@ local function read_jar_entry(uri, root_dir)
     end
     return result.stdout, vim.filetype.match({ filename = entry_path })
   end
-  local decompiled = decompile(uri, root_dir)
+  local decompiled = M.decompile(uri, root_dir)
   if not decompiled then
     error(('kotlin_lsp: the server for %s cannot decompile %s'):format(root_dir, uri))
   end
