@@ -17,8 +17,7 @@ it with no change.
 
 - The `kotlin-lsp` server from Homebrew: `/opt/homebrew/bin/kotlin-lsp`. The environment variable
   `KOTLIN_LSP_SERVER` sets another path.
-- Gradle 9 or later in the projects. When an older Gradle evaluates the init script of this repo,
-  the import can fail.
+- Gradle 9 or later in the projects. With an older Gradle, the projects get no library sources.
 - A Gradle wrapper (`gradlew`) in each project root.
 - Neovim 0.11 or later, with `zip` and `unzip` on PATH.
 - Go, to build the binary.

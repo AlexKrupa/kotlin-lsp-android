@@ -191,6 +191,16 @@ class LibrarySourcesTest {
     }
 
     @Test
+    fun selectsVariantFromSystemProperty() {
+        val projectDir = copyFixture("android")
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir, listOf("-Dlsp.android.variant=prodDebug"))
+
+        assertEquals("prodDebug", selectedVariants(outputDir)[":app"])
+    }
+
+    @Test
     fun listsAllVariants() {
         val projectDir = copyFixture("android")
         val outputDir = File(tempDir, "out")
@@ -259,7 +269,7 @@ class LibrarySourcesTest {
     }
 
     @Test
-    fun keepsOldFileWhenResolutionFails() {
+    fun includesResolvedLibrariesWhenOneDependencyIsMissing() {
         val projectDir = copyFixture("android")
         File(projectDir, "app/build.gradle.kts")
             .appendText("\ndependencies {\n    implementation(\"com.example:missing:1.0\")\n}\n")
@@ -270,6 +280,26 @@ class LibrarySourcesTest {
         val libraryNames = libraryClasses(workspace(outputDir)).keys
         assertTrue("Sources: androidx.core:core-ktx:1.13.1" in libraryNames, libraryNames.toString())
         assertTrue(libraryNames.none { "com.example:missing" in it }, libraryNames.toString())
+    }
+
+    @Test
+    fun keepsOldFileWhenTaskFails() {
+        val projectDir = copyFixture("jvm-only")
+        val outputDir = File(tempDir, "out")
+        runInitScript(projectDir, outputDir)
+        val workspaceFile = File(outputDir, "library-sources/workspace.json")
+        val oldContent = workspaceFile.readText()
+        val oldModified = workspaceFile.lastModified()
+        // A folder with content in place of the fragment file makes the rename of the task fail.
+        val fragment = File(outputDir, "library-sources/fragments/_.json")
+        fragment.delete()
+        File(fragment, "blocker").apply { parentFile.mkdirs() }.writeText("")
+
+        val result = runInitScript(projectDir, outputDir)
+
+        assertTrue("cannot write the library sources" in result.output, result.output)
+        assertEquals(oldContent, workspaceFile.readText())
+        assertEquals(oldModified, workspaceFile.lastModified())
     }
 
     @Test

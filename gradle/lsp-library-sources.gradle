@@ -521,6 +521,12 @@ gradle.rootProject { root ->
     }
 }
 
+// The APIs below need Gradle 9. An older Gradle gets no library sources, and its import still works.
+if (org.gradle.util.GradleVersion.current() < org.gradle.util.GradleVersion.version('9.0')) {
+    logger.warn("kotlin-lsp-android: Gradle ${gradle.gradleVersion} is older than 9.0, no library sources")
+    return
+}
+
 gradle.allprojects { project ->
     // The server import runs no named tasks. It runs prepareKotlinIdeaImport in each project of
     // each build of the tree.
