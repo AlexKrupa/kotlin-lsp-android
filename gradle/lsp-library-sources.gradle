@@ -62,6 +62,9 @@ abstract class LspLibrarySourcesModuleTask extends DefaultTask {
     @Internal
     List<ArtifactCollection> sourceJars = []
 
+    @Internal
+    List<ArtifactCollection> classifierSourceJars = []
+
     // Gradle resolves the artifact collections for this input, so the task can be up to date.
     @InputFiles
     @PathSensitive(PathSensitivity.ABSOLUTE)
@@ -114,12 +117,24 @@ abstract class LspLibrarySourcesModuleTask extends DefaultTask {
                 roots.classes.add(artifact.file.absolutePath)
             }
         }
-        sourceJars.each { sources ->
-            // Many libraries publish no sources. This is not a problem of the build.
-            sources.failures.each { logger.info("kotlin-lsp-android: ${modulePath.get()}: ${it.message}") }
-            sources.artifacts.each { artifact -> libraries[coordinate(artifact)]?.sources?.add(artifact.file.absolutePath) }
+        def variantSources = sourcesByCoordinate(sourceJars)
+        def classifierSources = sourcesByCoordinate(classifierSourceJars)
+        libraries.each { coordinate, roots ->
+            roots.sources.addAll(variantSources[coordinate] ?: classifierSources[coordinate] ?: [])
         }
         return libraries
+    }
+
+    Map<String, Set<String>> sourcesByCoordinate(List<ArtifactCollection> collections) {
+        def sources = new TreeMap<String, Set<String>>()
+        collections.each { collection ->
+            // Many libraries publish no sources. This is not a problem of the build.
+            collection.failures.each { logger.info("kotlin-lsp-android: ${modulePath.get()}: ${it.message}") }
+            collection.artifacts.each { artifact ->
+                sources.computeIfAbsent(coordinate(artifact)) { new TreeSet<String>() }.add(artifact.file.absolutePath)
+            }
+        }
+        return sources
     }
 
     static String coordinate(ResolvedArtifactResult artifact) {
@@ -369,9 +384,20 @@ void registerAndroidModuleTask(Project project) {
                 view.componentFilter { it instanceof ModuleComponentIdentifier }
                 view.lenient(true)
             }.artifacts
+            // Some Gradle metadata has no sources variant, but the repository has the
+            // `sources` classifier jar. Android Studio uses an `ArtifactResolutionQuery` for
+            // this, which a task action cannot use with the configuration cache.
+            def dependencies = project.dependencies
+            def classified = project.configurations.detachedConfiguration()
+            classified.transitive = false
+            classified.dependencies.addAllLater(classpath.resolvedArtifacts.map { artifacts ->
+                artifacts.collect { LspLibrarySourcesModuleTask.coordinate(it) }.unique().collect { dependencies.create("$it:sources@jar") }
+            })
+            def classifierSources = classified.incoming.artifactView { it.lenient(true) }.artifacts
             task.classpaths.add(classpath)
             task.sourceJars.add(sources)
-            task.libraryFiles.from(classpath.artifactFiles, sources.artifactFiles)
+            task.classifierSourceJars.add(classifierSources)
+            task.libraryFiles.from(classpath.artifactFiles, sources.artifactFiles, classifierSources.artifactFiles)
         }
         task.sdks.set(project.provider { sdkRoots(project, androidComponents) })
     }

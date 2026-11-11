@@ -94,6 +94,50 @@ class LibrarySourcesTest {
         JarOutputStream(file.outputStream()).close()
     }
 
+    /** `com.example:<module>:1.0` with Gradle metadata that has only a class jar variant. */
+    private fun writeLibraryWithNoSourcesVariant(repo: File, module: String) {
+        val libraryDir = File(repo, "com/example/$module/1.0")
+        writeJar(File(libraryDir, "$module-1.0.jar"))
+        File(libraryDir, "$module-1.0.module").writeText(
+            """
+            {
+              "formatVersion": "1.1",
+              "component": {"group": "com.example", "module": "$module", "version": "1.0"},
+              "variants": [{
+                "name": "apiElements",
+                "attributes": {
+                  "org.gradle.category": "library",
+                  "org.gradle.dependency.bundling": "external",
+                  "org.gradle.libraryelements": "jar",
+                  "org.gradle.usage": "java-api"
+                },
+                "files": [{"name": "$module-1.0.jar", "url": "$module-1.0.jar"}]
+              }]
+            }
+            """.trimIndent()
+        )
+    }
+
+    private fun addMavenRepository(projectDir: File, repo: File) {
+        File(projectDir, "settings.gradle.kts").appendText(
+            """
+
+            dependencyResolutionManagement {
+                repositories {
+                    maven {
+                        url = uri("${repo.toURI()}")
+                        metadataSources { gradleMetadata() }
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+    }
+
+    private fun addLibDependency(projectDir: File, notation: String) {
+        File(projectDir, "lib/build.gradle.kts").appendText("\ndependencies {\n    implementation(\"$notation\")\n}\n")
+    }
+
     private fun addGradleApi(projectDir: File) {
         File(projectDir, "build.gradle.kts").appendText("\ndependencies {\n    implementation(gradleApi())\n}\n")
     }
@@ -249,42 +293,11 @@ class LibrarySourcesTest {
     @Test
     fun findsSourcesInGradleCacheWhenMetadataHasNone() {
         val projectDir = copyFixture("android")
-        // Gradle metadata with no sources variant, so that only the Gradle cache has sources.
+        // The repository has no sources jar, so that only the Gradle cache has sources.
         val repo = File(tempDir, "repo")
-        val libraryDir = File(repo, "com/example/nosources/1.0")
-        writeJar(File(libraryDir, "nosources-1.0.jar"))
-        File(libraryDir, "nosources-1.0.module").writeText(
-            """
-            {
-              "formatVersion": "1.1",
-              "component": {"group": "com.example", "module": "nosources", "version": "1.0"},
-              "variants": [{
-                "name": "apiElements",
-                "attributes": {
-                  "org.gradle.category": "library",
-                  "org.gradle.dependency.bundling": "external",
-                  "org.gradle.libraryelements": "jar",
-                  "org.gradle.usage": "java-api"
-                },
-                "files": [{"name": "nosources-1.0.jar", "url": "nosources-1.0.jar"}]
-              }]
-            }
-            """.trimIndent()
-        )
-        File(projectDir, "settings.gradle.kts").appendText(
-            """
-            dependencyResolutionManagement {
-                repositories {
-                    maven {
-                        url = uri("${repo.toURI()}")
-                        metadataSources { gradleMetadata() }
-                    }
-                }
-            }
-            """.trimIndent()
-        )
-        File(projectDir, "lib/build.gradle.kts")
-            .appendText("\ndependencies {\n    implementation(\"com.example:nosources:1.0\")\n}\n")
+        writeLibraryWithNoSourcesVariant(repo, "nosources")
+        addMavenRepository(projectDir, repo)
+        addLibDependency(projectDir, "com.example:nosources:1.0")
         val cachedSources = File(testKitDir, "caches/modules-2/files-2.1/com.example/nosources/1.0/0123abcd/nosources-1.0-sources.jar")
         writeJar(cachedSources)
         val outputDir = File(tempDir, "out")
@@ -293,6 +306,24 @@ class LibrarySourcesTest {
 
         val sources = librarySources(workspace(outputDir))["Sources: com.example:nosources:1.0"]
         assertEquals(setOf(cachedSources.absolutePath), sources)
+    }
+
+    @Test
+    fun findsClassifierSourcesJarInRepositoryWhenMetadataHasNone() {
+        val projectDir = copyFixture("android")
+        // A file repository, so that the Gradle cache has no copy of the sources jar.
+        val repo = File(tempDir, "repo")
+        writeLibraryWithNoSourcesVariant(repo, "classifiedsources")
+        val repositorySources = File(repo, "com/example/classifiedsources/1.0/classifiedsources-1.0-sources.jar")
+        writeJar(repositorySources)
+        addMavenRepository(projectDir, repo)
+        addLibDependency(projectDir, "com.example:classifiedsources:1.0")
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir)
+
+        val sources = librarySources(workspace(outputDir))["Sources: com.example:classifiedsources:1.0"]
+        assertEquals(setOf(repositorySources.absolutePath), sources)
     }
 
     @Test
