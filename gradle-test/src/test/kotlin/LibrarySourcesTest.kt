@@ -444,6 +444,31 @@ class LibrarySourcesTest {
     }
 
     @Test
+    fun addsKotlinDslJarsToGradleApi() {
+        val projectDir = copyFixture("jvm-only")
+        File(projectDir, "build.gradle.kts").appendText("\ndependencies {\n    implementation(gradleKotlinDsl())\n}\n")
+        val gradleSources = File(tempDir, "gradle-sources")
+        val sourceRoot = File(gradleSources, "gradle-$gradleVersion/platforms/core-configuration/kotlin-dsl/src/main/kotlin")
+        sourceRoot.mkdirs()
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir, environment = mapOf("KOTLIN_LSP_GRADLE_SOURCES" to gradleSources.absolutePath))
+
+        val workspace = workspace(outputDir)
+        val classes = libraryClasses(workspace).getValue("Sources: gradle-api-$gradleVersion")
+        assertEquals(
+            setOf(
+                "gradle-api-$gradleVersion.jar",
+                "gradle-kotlin-dsl-$gradleVersion.jar",
+                "gradle-kotlin-dsl-shared-runtime-$gradleVersion.jar",
+                "gradle-kotlin-dsl-tooling-models-$gradleVersion.jar",
+            ),
+            classes.map { File(it).name }.toSet(),
+        )
+        assertEquals(setOf(sourceRoot.absolutePath), librarySources(workspace).getValue("Sources: gradle-api-$gradleVersion"))
+    }
+
+    @Test
     fun reportsMissingGradleSources() {
         val projectDir = copyFixture("jvm-only")
         addGradleApi(projectDir)

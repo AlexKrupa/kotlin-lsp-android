@@ -145,10 +145,12 @@ abstract class LspLibrarySourcesModuleTask extends DefaultTask {
         return "${id.group}:${id.module}:${id.version}".toString()
     }
 
+    // The Kotlin DSL jars of the Gradle distribution have their sources in the same Gradle source
+    // roots as the Gradle API, so they go into the same library.
     Map gradleApis() {
         def gradleApis = LspRoots.empty()
         fileDependencies.files.each { file ->
-            def match = file.name =~ /^gradle-api-(.+)\.jar$/
+            def match = file.name =~ /^gradle-(?:api|kotlin-dsl|kotlin-dsl-shared-runtime|kotlin-dsl-tooling-models)-(\d.*)\.jar$/
             if (match.matches()) {
                 LspRoots.addAll(gradleApis, [(match.group(1)): [classes: [file.absolutePath]]])
             }
