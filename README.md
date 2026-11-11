@@ -17,8 +17,8 @@ it with no change.
 
 - The `kotlin-lsp` server from Homebrew: `/opt/homebrew/bin/kotlin-lsp`. The environment variable
   `KOTLIN_LSP_SERVER` sets another path.
-- Gradle 9 or later in the projects. An older Gradle can fail the import when it evaluates the init
-  script of this repo.
+- Gradle 9 or later in the projects. When an older Gradle evaluates the init script of this repo,
+  the import can fail.
 - A Gradle wrapper (`gradlew`) in each project root.
 - Neovim 0.11 or later, with `zip` and `unzip` on PATH.
 - Go, to build the binary.
@@ -94,6 +94,7 @@ Files in `<cache root>/<key>/`:
 | `library-sources/workspace.json` | The libraries with their sources, for the server |
 | `library-sources/fragments/` | The part of `workspace.json` of each Gradle build |
 | `library-sources/empty/` | An empty content root for the module `lsp-library-sources` |
+| `library-sources/java-sources/` | Copies of the Java files of sources jars that have a top folder, for example `main/` |
 
 Files in `<cache root>/`, shared by all roots:
 

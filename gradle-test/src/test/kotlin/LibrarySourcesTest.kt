@@ -1,5 +1,7 @@
 import java.io.File
 import java.nio.file.Files
+import java.util.jar.JarEntry
+import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -89,10 +91,19 @@ class LibrarySourcesTest {
         return home
     }
 
-    private fun writeJar(file: File) {
+    /** [entries] maps entry names to their text. */
+    private fun writeJar(file: File, entries: Map<String, String> = emptyMap()) {
         file.parentFile.mkdirs()
-        JarOutputStream(file.outputStream()).close()
+        JarOutputStream(file.outputStream()).use { jar ->
+            entries.forEach { (name, text) ->
+                jar.putNextEntry(JarEntry(name))
+                jar.write(text.toByteArray())
+                jar.closeEntry()
+            }
+        }
     }
+
+    private fun jarEntryNames(path: String): List<String> = JarFile(path).use { jar -> jar.entries().toList().map { it.name } }
 
     /** `com.example:<module>:1.0` with Gradle metadata that has only a class jar variant. */
     private fun writeLibraryWithNoSourcesVariant(repo: File, module: String) {
@@ -324,6 +335,55 @@ class LibrarySourcesTest {
 
         val sources = librarySources(workspace(outputDir))["Sources: com.example:classifiedsources:1.0"]
         assertEquals(setOf(repositorySources.absolutePath), sources)
+    }
+
+    @Test
+    fun copiesJavaFilesOfSourcesJarWithTopFolder() {
+        val projectDir = copyFixture("android")
+        val repo = File(tempDir, "repo")
+        writeLibraryWithNoSourcesVariant(repo, "prefixed")
+        val prefixedSources = File(repo, "com/example/prefixed/1.0/prefixed-1.0-sources.jar")
+        writeJar(
+            prefixedSources,
+            mapOf(
+                "main/com/example/Prefixed.java" to "// License\npackage com.example;\n\npublic class Prefixed {}\n",
+                "main/com/example/Helper.kt" to "package com.example\n",
+                "commonMain/com/example/Common.kt" to "package com.example\n",
+            ),
+        )
+        writeLibraryWithNoSourcesVariant(repo, "plain")
+        val plainSources = File(repo, "com/example/plain/1.0/plain-1.0-sources.jar")
+        writeJar(plainSources, mapOf("com/example/Plain.java" to "package com.example;\n\npublic class Plain {}\n"))
+        addMavenRepository(projectDir, repo)
+        addLibDependency(projectDir, "com.example:prefixed:1.0")
+        addLibDependency(projectDir, "com.example:plain:1.0")
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir)
+
+        val sources = librarySources(workspace(outputDir))
+        val javaSources = File(outputDir, "library-sources/java-sources/com.example/prefixed-1.0-sources.jar")
+        assertEquals(setOf(prefixedSources.absolutePath, javaSources.absolutePath), sources["Sources: com.example:prefixed:1.0"])
+        assertEquals(listOf("com/example/Prefixed.java"), jarEntryNames(javaSources.absolutePath))
+        assertEquals(setOf(plainSources.absolutePath), sources["Sources: com.example:plain:1.0"])
+    }
+
+    @Test
+    fun keepsSourcesJarThatIsNotZipFile() {
+        val projectDir = copyFixture("android")
+        val repo = File(tempDir, "repo")
+        writeLibraryWithNoSourcesVariant(repo, "broken")
+        val brokenSources = File(repo, "com/example/broken/1.0/broken-1.0-sources.jar")
+        brokenSources.writeText("not a zip file")
+        addMavenRepository(projectDir, repo)
+        addLibDependency(projectDir, "com.example:broken:1.0")
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir)
+
+        val sources = librarySources(workspace(outputDir))
+        assertEquals(setOf(brokenSources.absolutePath), sources["Sources: com.example:broken:1.0"])
+        assertTrue("Sources: androidx.core:core-ktx:1.13.1" in sources, sources.keys.toString())
     }
 
     @Test

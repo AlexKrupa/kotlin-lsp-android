@@ -10,6 +10,9 @@ import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import org.gradle.api.artifacts.ArtifactCollection
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
@@ -240,9 +243,12 @@ abstract class LspLibrarySourcesTask extends DefaultTask {
         def libraries = new TreeMap<String, List<Map>>()
         def missingPlatforms = new TreeSet<String>()
         def missingGradleVersions = new TreeSet<String>()
+        def javaSourcesDir = new File(librarySources, 'java-sources')
         merged.libraries.each { coordinate, roots ->
             def sources = roots.sources ?: cachedSources(coordinate)
-            libraries["Sources: $coordinate".toString()] = rootsOf(roots.classes, sources)
+            def group = coordinate.split(':')[0]
+            def javaSources = sources.collect { javaSourcesJar(it, new File(javaSourcesDir, group)) }.findAll { it != null }
+            libraries["Sources: $coordinate".toString()] = rootsOf(roots.classes, sources + javaSources)
         }
         merged.sdks.each { name, roots ->
             def sources = roots.sources.findAll { new File(it).isDirectory() }
@@ -278,6 +284,66 @@ abstract class LspLibrarySourcesTask extends DefaultTask {
 
     static List<Map> rootsOf(Collection<String> classes, Collection<String> sources) {
         return classes.collect { [path: it] } + sources.collect { [path: it, type: 'SOURCES'] }
+    }
+
+    // The server finds a Java file only in the folder of its package under the source root. Some
+    // sources jars have all files in a top folder, for example `main/` or `jvmMain/`. A root of the
+    // `json` workspace cannot be a folder in a jar, so the Java files go into a copy with no top
+    // folder. Kotlin files resolve by their `package` line, so they stay only in the original jar.
+    // Null means that the jar needs no copy.
+    String javaSourcesJar(String sourcesJar, File targetDir) {
+        try {
+            def topFolder = javaTopFolder(sourcesJar)
+            if (topFolder == null) {
+                return null
+            }
+            def target = new File(targetDir, new File(sourcesJar).name)
+            if (target.lastModified() < new File(sourcesJar).lastModified()) {
+                copyJavaFiles(sourcesJar, topFolder, target)
+            }
+            return target.absolutePath
+        } catch (IOException e) {
+            // A bad jar must not stop the other libraries.
+            logger.warn("kotlin-lsp-android: cannot read the Java files of $sourcesJar", e)
+            return null
+        }
+    }
+
+    // To read one entry is enough: all Java files of the known jars have the same top folder.
+    static String javaTopFolder(String sourcesJar) {
+        return new ZipFile(sourcesJar).withCloseable { zip ->
+            // `module-info.java` has no `package` line. In `package-info.java`, annotations can
+            // come before the `package` line.
+            def entry = Collections.list(zip.entries()).find { it.name.endsWith('.java') && !it.name.endsWith('-info.java') }
+            if (entry == null) {
+                return null
+            }
+            def match = zip.getInputStream(entry).getText(StandardCharsets.UTF_8.name()) =~ /(?m)^\s*package\s+([\w.]+)\s*;/
+            if (!match.find()) {
+                return null
+            }
+            def folder = entry.name.substring(0, entry.name.lastIndexOf('/') + 1)
+            def packageFolder = match.group(1).replace('.', '/') + '/'
+            if (!folder.endsWith('/' + packageFolder)) {
+                return null
+            }
+            return folder.substring(0, folder.length() - packageFolder.length())
+        }
+    }
+
+    static void copyJavaFiles(String sourcesJar, String topFolder, File target) {
+        target.parentFile.mkdirs()
+        def temp = File.createTempFile(target.name, '.tmp', target.parentFile)
+        new ZipFile(sourcesJar).withCloseable { zip ->
+            new ZipOutputStream(temp.newOutputStream()).withCloseable { output ->
+                Collections.list(zip.entries()).findAll { it.name.startsWith(topFolder) && it.name.endsWith('.java') }.each { entry ->
+                    output.putNextEntry(new ZipEntry(entry.name.substring(topFolder.length())))
+                    zip.getInputStream(entry).withCloseable { output << it }
+                    output.closeEntry()
+                }
+            }
+        }
+        Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 
     // Some libraries have no sources variant in their Gradle metadata, but other tools, for
