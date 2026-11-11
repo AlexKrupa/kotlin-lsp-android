@@ -3,13 +3,21 @@ import groovy.json.JsonSlurper
 import java.nio.channels.FileChannel
 import java.nio.channels.OverlappingFileLockException
 import java.nio.charset.StandardCharsets
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 import org.gradle.api.artifacts.ArtifactCollection
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedArtifactResult
 import org.gradle.api.artifacts.type.ArtifactTypeDefinition
+import org.gradle.api.attributes.Category
+import org.gradle.api.attributes.DocsType
 
 class LspFiles {
     // A reader never sees a partial file.
@@ -18,6 +26,20 @@ class LspFiles {
         def temp = File.createTempFile(target.name, '.tmp', target.parentFile)
         temp.setText(JsonOutput.prettyPrint(JsonOutput.toJson(content)), StandardCharsets.UTF_8.name())
         Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+}
+
+// Libraries, SDKs, and Gradle APIs are maps: name to root kind to paths.
+class LspRoots {
+    static Map<String, Map<String, Set<String>>> empty() {
+        return new TreeMap<String, Map<String, Set<String>>>()
+    }
+
+    static void addAll(Map<String, Map<String, Set<String>>> target, Map<String, Map<String, Collection<String>>> source) {
+        source.each { name, roots ->
+            def targetRoots = target.computeIfAbsent(name) { new TreeMap<String, Set<String>>() }
+            roots.each { kind, paths -> targetRoots.computeIfAbsent(kind) { new TreeSet<String>() }.addAll(paths) }
+        }
     }
 }
 
@@ -37,14 +59,27 @@ abstract class LspLibrarySourcesModuleTask extends DefaultTask {
     @Internal
     List<ArtifactCollection> classpaths = []
 
+    @Internal
+    List<ArtifactCollection> sourceJars = []
+
+    // Gradle resolves the artifact collections for this input, so the task can be up to date.
     @InputFiles
     @PathSensitive(PathSensitivity.ABSOLUTE)
-    abstract ConfigurableFileCollection getClasspathFiles()
+    abstract ConfigurableFileCollection getLibraryFiles()
+
+    // Only paths, so that the merge can look for the SDK sources each time.
+    @Input
+    abstract MapProperty<String, Map<String, List<String>>> getSdks()
+
+    @InputFiles
+    @PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract ConfigurableFileCollection getFileDependencies()
 
     @Input
     abstract Property<String> getModulePath()
 
     @Input
+    @Optional
     abstract ListProperty<String> getVariants()
 
     @Input
@@ -57,24 +92,50 @@ abstract class LspLibrarySourcesModuleTask extends DefaultTask {
     @TaskAction
     void write() {
         try {
-            def libraries = new TreeMap<String, Set<String>>()
-            classpaths.each { classpath ->
-                classpath.failures.each { logger.warn("kotlin-lsp-android: ${modulePath.get()}: ${it.message}") }
-                classpath.artifacts.each { artifact ->
-                    def id = artifact.id.componentIdentifier as ModuleComponentIdentifier
-                    def coordinate = "${id.group}:${id.module}:${id.version}".toString()
-                    libraries.computeIfAbsent(coordinate) { new TreeSet<String>() }.add(artifact.file.absolutePath)
-                }
-            }
             LspFiles.writeAtomically(moduleFile.get().asFile, [
-                path     : modulePath.get(),
-                variants : variants.get(),
-                selected : selectedVariant.getOrNull(),
-                libraries: libraries,
+                path      : modulePath.get(),
+                variants  : variants.getOrElse([]),
+                selected  : selectedVariant.getOrNull(),
+                libraries : libraries(),
+                sdks      : sdks.get(),
+                gradleApis: gradleApis(),
             ])
-        } catch (Exception e) {
+        } catch (Throwable e) {
             logger.warn("kotlin-lsp-android: cannot write the libraries of ${modulePath.get()}. The old files stay.", e)
         }
+    }
+
+    Map libraries() {
+        def libraries = LspRoots.empty()
+        classpaths.each { classpath ->
+            classpath.failures.each { logger.warn("kotlin-lsp-android: ${modulePath.get()}: ${it.message}") }
+            classpath.artifacts.each { artifact ->
+                def roots = libraries.computeIfAbsent(coordinate(artifact)) { [classes: new TreeSet<String>(), sources: new TreeSet<String>()] }
+                roots.classes.add(artifact.file.absolutePath)
+            }
+        }
+        sourceJars.each { sources ->
+            // Many libraries publish no sources. This is not a problem of the build.
+            sources.failures.each { logger.info("kotlin-lsp-android: ${modulePath.get()}: ${it.message}") }
+            sources.artifacts.each { artifact -> libraries[coordinate(artifact)]?.sources?.add(artifact.file.absolutePath) }
+        }
+        return libraries
+    }
+
+    static String coordinate(ResolvedArtifactResult artifact) {
+        def id = artifact.id.componentIdentifier as ModuleComponentIdentifier
+        return "${id.group}:${id.module}:${id.version}".toString()
+    }
+
+    Map gradleApis() {
+        def gradleApis = LspRoots.empty()
+        fileDependencies.files.each { file ->
+            def match = file.name =~ /^gradle-api-(.+)\.jar$/
+            if (match.matches()) {
+                LspRoots.addAll(gradleApis, [(match.group(1)): [classes: [file.absolutePath]]])
+            }
+        }
+        return gradleApis
     }
 }
 
@@ -88,6 +149,15 @@ abstract class LspLibrarySourcesTask extends DefaultTask {
 
     @Internal
     abstract Property<String> getOutputDir()
+
+    @Internal
+    abstract Property<String> getGradleUserHome()
+
+    @Internal
+    abstract Property<String> getGradleHome()
+
+    @Internal
+    abstract Property<String> getGradleSources()
 
     @TaskAction
     void write() {
@@ -103,26 +173,25 @@ abstract class LspLibrarySourcesTask extends DefaultTask {
             withLock(new File(fragments, '.lock')) {
                 merge(new File(outputDir.get()), librarySources, fragments)
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             logger.warn("kotlin-lsp-android: cannot write the library sources of ${buildPath.get()}. The old files stay.", e)
         }
     }
 
     Map fragment() {
-        def modules = new TreeMap<String, List<String>>()
-        def selected = new TreeMap<String, String>()
-        def libraries = new TreeMap<String, Set<String>>()
+        def fragment = [modules: new TreeMap<String, List<String>>(), selected: new TreeMap<String, String>(),
+                        libraries: LspRoots.empty(), sdks: LspRoots.empty(), gradleApis: LspRoots.empty()]
         moduleFiles.files.findAll { it.exists() }.each { file ->
             def module = new JsonSlurper().parse(file)
-            modules[module.path] = module.variants
+            if (module.variants) {
+                fragment.modules[module.path] = module.variants
+            }
             if (module.selected != null) {
-                selected[module.path] = module.selected
+                fragment.selected[module.path] = module.selected
             }
-            module.libraries.each { coordinate, paths ->
-                libraries.computeIfAbsent(coordinate) { new TreeSet<String>() }.addAll(paths)
-            }
+            ['libraries', 'sdks', 'gradleApis'].each { LspRoots.addAll(fragment[it], module[it]) }
         }
-        return [modules: modules, selected: selected, libraries: libraries]
+        return fragment
     }
 
     // Other builds of the tree can merge in this JVM at the same time. The file lock only
@@ -142,74 +211,219 @@ abstract class LspLibrarySourcesTask extends DefaultTask {
         }
     }
 
-    static void merge(File outputDir, File librarySources, File fragments) {
+    void merge(File outputDir, File librarySources, File fragments) {
         def modules = new TreeMap<String, List<String>>()
         def selected = new TreeMap<String, String>()
-        def libraries = new TreeMap<String, Set<String>>()
+        def merged = [libraries: LspRoots.empty(), sdks: LspRoots.empty(), gradleApis: LspRoots.empty()]
         fragments.listFiles().findAll { it.name.endsWith('.json') }.each { file ->
             def fragment = new JsonSlurper().parse(file)
             modules.putAll(fragment.modules)
             selected.putAll(fragment.selected)
-            fragment.libraries.each { coordinate, paths ->
-                libraries.computeIfAbsent(coordinate) { new TreeSet<String>() }.addAll(paths)
-            }
+            merged.each { kind, roots -> LspRoots.addAll(roots, fragment[kind]) }
         }
+
+        def libraries = new TreeMap<String, List<Map>>()
+        def missingPlatforms = new TreeSet<String>()
+        def missingGradleVersions = new TreeSet<String>()
+        merged.libraries.each { coordinate, roots ->
+            def sources = roots.sources ?: cachedSources(coordinate)
+            libraries["Sources: $coordinate".toString()] = rootsOf(roots.classes, sources)
+        }
+        merged.sdks.each { name, roots ->
+            def sources = roots.sources.findAll { new File(it).isDirectory() }
+            if (sources.isEmpty()) {
+                missingPlatforms.add(name)
+            }
+            libraries["Sources: $name".toString()] = rootsOf(roots.classes, sources)
+        }
+        merged.gradleApis.each { version, roots ->
+            def sources = gradleSourceRoots(version)
+            if (sources == null) {
+                missingGradleVersions.add(version)
+            }
+            libraries["Sources: gradle-api-$version".toString()] = rootsOf(roots.classes, sources ?: [])
+        }
+
         def empty = new File(librarySources, 'empty')
         empty.mkdirs()
-        def names = libraries.keySet().collect { "Sources: $it".toString() }
         LspFiles.writeAtomically(new File(librarySources, 'workspace.json'), [
             modules  : [[
                 name        : 'lsp-library-sources',
-                dependencies: [[type: 'moduleSource']] + names.collect { [type: 'library', name: it, scope: 'compile'] },
+                dependencies: [[type: 'moduleSource']] + libraries.keySet().collect { [type: 'library', name: it, scope: 'compile'] },
                 contentRoots: [[path: empty.absolutePath]],
             ]],
-            libraries: libraries.collect { coordinate, paths ->
-                [name: "Sources: $coordinate".toString(), type: 'COMPILE', roots: paths.collect { [path: it] }]
-            },
+            libraries: libraries.collect { name, roots -> [name: name, type: 'COMPILE', roots: roots] },
         ])
         LspFiles.writeAtomically(new File(outputDir, 'variants.json'), [modules: modules, selected: selected])
+        LspFiles.writeAtomically(new File(outputDir, 'missing-sources.json'), [
+            androidPlatforms: missingPlatforms,
+            gradleVersions  : missingGradleVersions,
+        ])
+    }
+
+    static List<Map> rootsOf(Collection<String> classes, Collection<String> sources) {
+        return classes.collect { [path: it] } + sources.collect { [path: it, type: 'SOURCES'] }
+    }
+
+    // Some libraries have no sources variant in their Gradle metadata, but other tools, for
+    // example Android Studio, put their sources jar in the Gradle cache.
+    List<String> cachedSources(String coordinate) {
+        def (group, module, version) = coordinate.split(':')
+        def versionDir = new File(gradleUserHome.get(), "caches/modules-2/files-2.1/$group/$module/$version")
+        def hashDirs = versionDir.listFiles() ?: []
+        return hashDirs.collectMany { it.listFiles()?.findAll { it.name.endsWith('-sources.jar') } ?: [] }*.absolutePath.sort()
+    }
+
+    // Null means that the sources are not on the disk. An `-all` distribution has them in
+    // `<gradleHome>/src`. Else the download of the proxy extracts `src/main` of each Gradle
+    // project to `$KOTLIN_LSP_GRADLE_SOURCES/gradle-<version>/`.
+    List<String> gradleSourceRoots(String version) {
+        def homeSources = gradleHome.present ? new File(gradleHome.get(), 'src') : null
+        if (homeSources?.isDirectory()) {
+            return distributionSourceRoots(homeSources)
+        }
+        def extracted = gradleSources.present ? new File(gradleSources.get(), "gradle-$version") : null
+        if (extracted?.isDirectory()) {
+            return extractedSourceRoots(extracted)
+        }
+        return null
+    }
+
+    // The rule of IntelliJ in `GradleInstallationManager`: `src` is one root, or each folder in
+    // it is a root.
+    static List<String> distributionSourceRoots(File homeSources) {
+        if (new File(homeSources, 'org').isDirectory()) {
+            return [homeSources.absolutePath]
+        }
+        return homeSources.listFiles().findAll { it.isDirectory() }*.absolutePath.sort()
+    }
+
+    static List<String> extractedSourceRoots(File extracted) {
+        def roots = []
+        Files.walkFileTree(extracted.toPath(), new SimpleFileVisitor<Path>() {
+            @Override
+            FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attributes) {
+                if (dir.fileName.toString() != 'main' || dir.parent.fileName.toString() != 'src') {
+                    return FileVisitResult.CONTINUE
+                }
+                ['java', 'kotlin'].collect { dir.resolve(it) }.findAll { Files.isDirectory(it) }.each { roots.add(it.toString()) }
+                return FileVisitResult.SKIP_SUBTREE
+            }
+        })
+        return roots.sort()
     }
 }
 
-void registerModuleTask(Project project) {
+void registerModuleTask(Project project, Action<LspLibrarySourcesModuleTask> configure) {
+    def moduleTask = project.tasks.register('lspLibrarySourcesModule', LspLibrarySourcesModuleTask) { task ->
+        try {
+            task.modulePath.set(project.buildTreePath)
+            task.moduleFile.set(project.layout.buildDirectory.file('lsp-library-sources/module.json'))
+            configure.execute(task)
+        } catch (Throwable e) {
+            // The old module file stays, and the merge uses it.
+            task.enabled = false
+            project.logger.warn("kotlin-lsp-android: cannot read the libraries of ${project.buildTreePath}", e)
+        }
+    }
+    project.rootProject.tasks.named('lspLibrarySources', LspLibrarySourcesTask) { task ->
+        try {
+            task.moduleFiles.from(moduleTask.flatMap { it.moduleFile })
+        } catch (Throwable e) {
+            project.logger.warn("kotlin-lsp-android: cannot add the libraries of ${project.buildTreePath}", e)
+        }
+    }
+}
+
+void registerAndroidModuleTask(Project project) {
     def variants = new LinkedHashMap<String, List<Configuration>>()
     def androidComponents = project.extensions.getByName('androidComponents')
     androidComponents.onVariants(androidComponents.selector().all(), { variant ->
         try {
             variants[variant.name] = [variant.compileConfiguration] + variant.nestedComponents*.compileConfiguration
-        } catch (Exception e) {
+        } catch (Throwable e) {
             project.logger.warn("kotlin-lsp-android: cannot read the variant ${variant.name} of ${project.buildTreePath}", e)
         }
     } as Action)
     def requested = project.providers.gradleProperty('lsp.android.variant')
         .orElse(project.providers.systemProperty('lsp.android.variant'))
         .orElse(project.providers.environmentVariable('LSP_ANDROID_VARIANT'))
-    def moduleTask = project.tasks.register('lspLibrarySourcesModule', LspLibrarySourcesModuleTask) { task ->
+    registerModuleTask(project) { task ->
         def names = variants.keySet().toList()
         def selected = LspVariants.select(names, requested.getOrNull())
-        task.modulePath.set(project.buildTreePath)
         task.variants.set(names)
         task.selectedVariant.set(selected)
-        task.moduleFile.set(project.layout.buildDirectory.file('lsp-library-sources/module.json'))
         variants.getOrDefault(selected, []).each { configuration ->
             def classpath = configuration.incoming.artifactView { view ->
                 view.attributes { it.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, 'jar') }
                 view.componentFilter { it instanceof ModuleComponentIdentifier }
                 view.lenient(true)
             }.artifacts
+            // The same request as `AdditionalClassifierArtifactsModelBuilder` of Android Studio.
+            def sources = configuration.incoming.artifactView { view ->
+                view.withVariantReselection()
+                view.attributes {
+                    it.attribute(Category.CATEGORY_ATTRIBUTE, project.objects.named(Category, Category.DOCUMENTATION))
+                    it.attribute(DocsType.DOCS_TYPE_ATTRIBUTE, project.objects.named(DocsType, DocsType.SOURCES))
+                }
+                view.componentFilter { it instanceof ModuleComponentIdentifier }
+                view.lenient(true)
+            }.artifacts
             task.classpaths.add(classpath)
-            task.classpathFiles.from(classpath.artifactFiles)
+            task.sourceJars.add(sources)
+            task.libraryFiles.from(classpath.artifactFiles, sources.artifactFiles)
         }
+        task.sdks.set(project.provider { sdkRoots(project, androidComponents) })
     }
-    project.rootProject.tasks.named('lspLibrarySources', LspLibrarySourcesTask) {
-        it.moduleFiles.from(moduleTask.flatMap { it.moduleFile })
+}
+
+// A missing SDK platform makes the AGP providers fail. The import must not fail, so the libraries
+// go in with no SDK. The source folder is only a candidate here: the merge looks for it each time,
+// so that a download after this task shows in the next import.
+Map<String, Map<String, List<String>>> sdkRoots(Project project, androidComponents) {
+    try {
+        def classes = androidComponents.sdkComponents.bootClasspath.get()*.asFile
+        def platform = classes.find { it.name == 'android.jar' && it.parentFile.parentFile.name == 'platforms' }
+        if (platform == null) {
+            return [:]
+        }
+        def name = platform.parentFile.name
+        def sources = new File(androidComponents.sdkComponents.sdkDirectory.get().asFile, "sources/$name")
+        return [(name): [classes: classes*.absolutePath, sources: [sources.absolutePath]]]
+    } catch (Throwable e) {
+        project.logger.warn("kotlin-lsp-android: cannot read the Android SDK of ${project.buildTreePath}", e)
+        return [:]
+    }
+}
+
+void registerJvmModuleTask(Project project) {
+    registerModuleTask(project) { task ->
+        // `gradleApi()` is a file dependency. The filter also keeps the builds of other projects out.
+        def files = project.configurations.named('compileClasspath').get().incoming.artifactView { view ->
+            view.componentFilter { !(it instanceof ModuleComponentIdentifier || it instanceof ProjectComponentIdentifier) }
+            view.lenient(true)
+        }.files
+        task.fileDependencies.from(files)
     }
 }
 
 gradle.rootProject { root ->
     root.tasks.register('lspLibrarySources', LspLibrarySourcesTask) { task ->
-        task.buildPath.set(root.buildTreePath)
-        task.outputDir.set(root.providers.environmentVariable('KOTLIN_LSP_ANDROID_OUTPUT'))
+        try {
+            task.buildPath.set(root.buildTreePath)
+            task.outputDir.set(root.providers.environmentVariable('KOTLIN_LSP_ANDROID_OUTPUT'))
+            task.gradleUserHome.set(root.gradle.gradleUserHomeDir.absolutePath)
+            task.gradleHome.set(root.gradle.gradleHomeDir?.absolutePath)
+            task.gradleSources.set(root.providers.environmentVariable('KOTLIN_LSP_GRADLE_SOURCES'))
+            // The separate run starts the task only in the root build. The import starts it in
+            // each build.
+            if (root.gradle.parent == null) {
+                task.dependsOn(root.gradle.includedBuilds.collect { it.task(':lspLibrarySources') })
+            }
+        } catch (Throwable e) {
+            task.enabled = false
+            root.logger.warn("kotlin-lsp-android: cannot configure the library sources of ${root.buildTreePath}. The old files stay.", e)
+        }
     }
 }
 
@@ -217,15 +431,27 @@ gradle.allprojects { project ->
     // The server import runs no named tasks. It runs prepareKotlinIdeaImport in each project of
     // each build of the tree.
     project.tasks.named({ it == 'prepareKotlinIdeaImport' } as Spec<String>).configureEach {
-        it.finalizedBy(project.rootProject.tasks.named('lspLibrarySources'))
+        try {
+            it.finalizedBy(project.rootProject.tasks.named('lspLibrarySources'))
+        } catch (Throwable e) {
+            project.logger.warn("kotlin-lsp-android: cannot add lspLibrarySources to the import of ${project.buildTreePath}", e)
+        }
     }
     ['com.android.application', 'com.android.library'].each { pluginId ->
         project.pluginManager.withPlugin(pluginId) {
             try {
-                registerModuleTask(project)
-            } catch (Exception e) {
+                registerAndroidModuleTask(project)
+            } catch (Throwable e) {
                 project.logger.warn("kotlin-lsp-android: cannot add the libraries of ${project.buildTreePath}", e)
             }
+        }
+    }
+    // For the Gradle API of build logic projects.
+    project.pluginManager.withPlugin('java') {
+        try {
+            registerJvmModuleTask(project)
+        } catch (Throwable e) {
+            project.logger.warn("kotlin-lsp-android: cannot add the Gradle API of ${project.buildTreePath}", e)
         }
     }
 }
