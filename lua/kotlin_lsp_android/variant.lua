@@ -1,7 +1,7 @@
 local M = {}
 
 -- The same executable as the `cmd` of the client.
-local executable = 'kotlin-lsp'
+local executable
 
 ---@param args string[]
 ---@return vim.SystemObj
@@ -37,7 +37,9 @@ local function set(root, name)
 end
 
 ---@param get_last_root fun(): string?
-function M.setup(get_last_root)
+---@param proxy string
+function M.setup(get_last_root, proxy)
+  executable = proxy
   local function find_root()
     local client = vim.lsp.get_clients({ name = 'kotlin_lsp', bufnr = 0 })[1]
     local root = client and client.root_dir or get_last_root()

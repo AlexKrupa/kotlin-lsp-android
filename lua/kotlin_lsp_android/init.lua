@@ -10,7 +10,12 @@ local function get_last_root()
   return last_root
 end
 
-function M.setup()
+-- An LSP client can have a PATH without the folder of the proxy, so `setup` can give a full path.
+local executable = 'kotlin-lsp'
+
+---@param opts? { executable?: string } `executable`: the `kotlin-lsp` proxy, default from PATH
+function M.setup(opts)
+  executable = opts and opts.executable or executable
   vim.api.nvim_create_autocmd({ 'BufEnter', 'LspAttach' }, {
     group = vim.api.nvim_create_augroup('kotlin-lsp-last-root', { clear = true }),
     callback = function(event)
@@ -21,7 +26,7 @@ function M.setup()
     end,
   })
   require('kotlin_lsp_android.jar').setup(get_last_root)
-  require('kotlin_lsp_android.variant').setup(get_last_root)
+  require('kotlin_lsp_android.variant').setup(get_last_root, executable)
 end
 
 ---@param bufnr integer
@@ -86,7 +91,7 @@ function M.cmd(dispatchers, config)
     end)
   end
   rpc = vim.lsp.rpc.start(
-    { 'kotlin-lsp', '--stdio' },
+    { executable, '--stdio' },
     vim.tbl_extend('force', dispatchers, { on_exit = start_again }),
     { cwd = config.root_dir }
   )

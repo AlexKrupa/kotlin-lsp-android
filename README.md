@@ -40,7 +40,7 @@ it with no change.
    {
      dir = '~/src/kotlin-lsp-android',
      config = function()
-       require('kotlin_lsp_android').setup()
+       require('kotlin_lsp_android').setup({ executable = vim.fn.expand('~/.local/wrappers/kotlin-lsp') })
      end,
    }
    ```
@@ -54,7 +54,9 @@ it with no change.
    })
    ```
 
-`cmd` starts `kotlin-lsp --stdio` in the root directory of the client. `root_dir` finds the Gradle
+`cmd` starts `kotlin-lsp --stdio` in the root directory of the client. Without `executable`, it
+takes `kotlin-lsp` from the PATH of Neovim, which can be the Homebrew server. `:AndroidVariant` uses
+the same executable. `root_dir` finds the Gradle
 root of a buffer. For a library file (a `jar:` buffer, or an Android SDK or Gradle source file), it
 uses the root of the last Kotlin buffer.
 

@@ -79,13 +79,13 @@ variant)
 esac
 ]]):format(bin_dir), '\n'), bin_dir .. '/kotlin-lsp')
 vim.fn.setfperm(bin_dir .. '/kotlin-lsp', 'rwxr-xr-x')
-vim.env.PATH = bin_dir .. ':' .. vim.env.PATH
 
 vim.fn.writefile({}, project_dir .. '/settings.gradle.kts')
 vim.fn.writefile({ 'class A' }, project_dir .. '/A.kt')
 
 local plugin = require('kotlin_lsp_android')
-plugin.setup()
+-- The fake is not on PATH, so the test fails if `cmd` or `:AndroidVariant` ignores the option.
+plugin.setup({ executable = bin_dir .. '/kotlin-lsp' })
 vim.lsp.config('kotlin_lsp', { cmd = plugin.cmd, root_dir = plugin.root_dir, filetypes = { 'kotlin' } })
 vim.lsp.enable('kotlin_lsp')
 
