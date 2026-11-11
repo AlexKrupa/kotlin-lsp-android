@@ -72,6 +72,14 @@ uses the root of the last Kotlin buffer.
 
 They extract a sources jar to the Neovim cache folder.
 
+During the import and the indexing, kotlin-lsp can also locate a symbol in a class file. A later
+jump gives the source. Then `cmd` opens the class file and shows a message. When the work done
+progress (`$/progress`) of the client ends, `cmd` sends the request again. If the new result is a
+source file and the class file is still the current buffer, `cmd` moves the cursor there. The
+jumplist and the tagstack do not get the class file, so `<C-o>` and `<C-t>` go back to the start
+of the jump. A class file location from outside the indexing gets no retry, because many libraries
+have no sources.
+
 ## Variants
 
 The binary reads the build variants from the first Gradle run of the init script: the separate run
@@ -152,6 +160,7 @@ Lua tests, with no user config:
 
 ```sh
 nvim --clean --headless -l tests/jar_spec.lua
+nvim --clean --headless -l tests/retry_spec.lua
 nvim --clean --headless -l tests/sources_spec.lua
 nvim --clean --headless -l tests/variant_spec.lua
 ```

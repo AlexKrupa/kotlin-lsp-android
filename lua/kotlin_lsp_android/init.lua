@@ -70,15 +70,19 @@ local server_closed_exit_code = 3
 ---@param config vim.lsp.ClientConfig
 function M.cmd(dispatchers, config)
   local rpc
+  ---@return vim.lsp.Client?
+  local function find_client()
+    return vim.iter(vim.lsp.get_clients({ name = 'kotlin_lsp' })):find(function(candidate)
+      return candidate.rpc == rpc
+    end)
+  end
   local on_exit = dispatchers.on_exit
   local function start_again(code, signal)
     if code ~= server_closed_exit_code then
       return on_exit(code, signal)
     end
     -- The buffers must be read now: the exit detaches them.
-    local client = vim.iter(vim.lsp.get_clients({ name = 'kotlin_lsp' })):find(function(candidate)
-      return candidate.rpc == rpc
-    end)
+    local client = find_client()
     local buffers = client and vim.tbl_keys(client.attached_buffers) or {}
     -- Code 0, because Neovim shows a warning for any other code.
     on_exit(0, signal)
@@ -90,23 +94,41 @@ function M.cmd(dispatchers, config)
       end
     end)
   end
+  local indexing = require('kotlin_lsp_android.indexing').new()
   rpc = vim.lsp.rpc.start(
     { executable, '--stdio' },
-    vim.tbl_extend('force', dispatchers, { on_exit = start_again }),
+    vim.tbl_extend('force', dispatchers, { on_exit = start_again, notification = indexing.observe(dispatchers.notification) }),
     { cwd = config.root_dir }
   )
   -- The change is in the RPC client, not in a handler, so that each consumer of locations, for
   -- example Telescope, gets the sources.
   local request = rpc.request
+  ---@param on_located fun(err: lsp.ResponseError?, located: lsp.Location[]|lsp.LocationLink[]|nil, was_indexing: boolean)
+  local function request_located(method, params, on_located, notify_reply_callback)
+    return request(method, params, function(err, result)
+      -- The `$/progress` end can come directly after the result, before the scheduled callback.
+      local was_indexing = indexing.is_active()
+      -- The search waits for `rg` and `unzip`, which a fast event cannot do.
+      vim.schedule(function()
+        on_located(err, err == nil and require('kotlin_lsp_android.sources').to_sources(result, params, config.root_dir) or result, was_indexing)
+      end)
+    end, notify_reply_callback)
+  end
   rpc.request = function(method, params, callback, notify_reply_callback)
     if not location_methods[method] then
       return request(method, params, callback, notify_reply_callback)
     end
-    return request(method, params, function(err, result)
-      -- The search waits for `rg` and `unzip`, which a fast event cannot do.
-      vim.schedule(function()
-        callback(err, err == nil and require('kotlin_lsp_android.sources').to_sources(result, params, config.root_dir) or result)
-      end)
+    return request_located(method, params, function(err, located, was_indexing)
+      callback(err, located)
+      if err ~= nil or located == nil or not was_indexing then
+        return
+      end
+      local client = assert(find_client(), 'kotlin_lsp: no client for the RPC client of a location request')
+      indexing.retry(located, function(on_locations)
+        request_located(method, params, function(_, new_located)
+          on_locations(new_located or {})
+        end)
+      end, client.offset_encoding)
     end, notify_reply_callback)
   end
   return rpc
