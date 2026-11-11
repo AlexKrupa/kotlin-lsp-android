@@ -54,7 +54,8 @@ it with no change.
    ```
 
 `cmd` starts `kotlin-lsp --stdio` in the root directory of the client. `root_dir` finds the Gradle
-root of a buffer. For a library file in a jar, it uses the root of the last Kotlin buffer.
+root of a buffer. For a library file (a `jar:` buffer, or an Android SDK or Gradle source file), it
+uses the root of the last Kotlin buffer.
 
 ## Variants
 
@@ -103,7 +104,7 @@ Files in `<cache root>/`, shared by all roots:
 | --- | --- |
 | `gradle-sources/` | Extracted `src/main` folders of the Gradle source distributions |
 | `download.log` | Log of the background downloads |
-| `download.lock` | Lock that allows one download at a time |
+| `download.lock` | Lock that allows one download at a time. A second download waits. |
 
 ## Limits
 

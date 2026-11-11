@@ -30,7 +30,10 @@ end
 ---@param on_dir fun(root_dir: string)
 function M.root_dir(bufnr, on_dir)
   local name = vim.api.nvim_buf_get_name(bufnr)
-  local is_library_file = vim.startswith(name, 'jar:') or name:match '/sources/android%-[^/]+/' ~= nil
+  local is_library_file = vim.startswith(name, 'jar:')
+    or name:match '/sources/android%-[^/]+/' ~= nil
+    or name:match '/gradle%-sources/gradle%-[^/]+/' ~= nil
+    or name:match '/wrapper/dists/.-/src/' ~= nil
   if is_library_file then
     if last_root then
       on_dir(last_root)

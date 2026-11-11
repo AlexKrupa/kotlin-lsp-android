@@ -64,9 +64,9 @@ func serve(t *testing.T, version string, archive []byte, checksum string) *atomi
 		}
 	}))
 	t.Cleanup(server.Close)
-	previous := BaseURL
-	BaseURL = server.URL
-	t.Cleanup(func() { BaseURL = previous })
+	previous := baseURL
+	baseURL = server.URL
+	t.Cleanup(func() { baseURL = previous })
 	return &requests
 }
 
@@ -244,7 +244,7 @@ func TestNothingMissingDoesNothing(t *testing.T) {
 	}
 }
 
-func TestRunExitsAtOnceWhenAnotherDownloadHoldsTheLock(t *testing.T) {
+func TestRunWaitsWhileAnotherDownloadHoldsTheLock(t *testing.T) {
 	cacheRoot := t.TempDir()
 	t.Setenv("KOTLIN_LSP_CACHE", cacheRoot)
 	record := fakeAndroid(t, 0)
@@ -259,12 +259,21 @@ func TestRunExitsAtOnceWhenAnotherDownloadHoldsTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Run(cacheDir); err != nil {
+	result := make(chan error, 1)
+	go func() { result <- Run(cacheDir) }()
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(record); err == nil {
+		t.Fatal("android was run while another download held the lock")
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(record); err == nil {
-		t.Error("android was run while another download held the lock")
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(record); err != nil {
+		t.Error("android was not run after the lock was free")
 	}
 }
 

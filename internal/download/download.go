@@ -21,8 +21,8 @@ import (
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
 )
 
-// BaseURL is a variable so that tests can point it at a local server.
-var BaseURL = "https://services.gradle.org/distributions"
+// baseURL is a variable so that tests can point it at a local server.
+var baseURL = "https://services.gradle.org/distributions"
 
 // The sources archive is large and the download runs in the background, so the limit only stops
 // a connection that hangs for ever. A hung download would hold the lock.
@@ -60,8 +60,7 @@ func Start(cacheDir string) error {
 	return child.Process.Release()
 }
 
-// Run downloads what <cacheDir>/missing-sources.json lists. It does nothing when another
-// download holds the lock. A failed download does not stop the others: Run returns all errors.
+// Run waits for the lock, because the download that holds it can be for another root.
 func Run(cacheDir string) error {
 	cacheRoot := root.CacheRoot()
 	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
@@ -73,10 +72,7 @@ func Run(cacheDir string) error {
 		return fmt.Errorf("open lock %s: %w", lockPath, err)
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil
-		}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("lock %s: %w", lockPath, err)
 	}
 
@@ -122,7 +118,7 @@ func gradleSources(sourcesDir, version string) error {
 		return fmt.Errorf("create %s: %w", sourcesDir, err)
 	}
 
-	url := BaseURL + "/" + name + "-src.zip"
+	url := baseURL + "/" + name + "-src.zip"
 	wantChecksum, err := fetchChecksum(url + ".sha256")
 	if err != nil {
 		return err
@@ -156,16 +152,26 @@ func gradleSources(sourcesDir, version string) error {
 	return nil
 }
 
-func fetchChecksum(url string) (string, error) {
+// get returns the body of url. The caller closes it.
+func get(url string) (io.ReadCloser, error) {
 	response, err := client.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("get %s: %w", url, err)
+		return nil, fmt.Errorf("get %s: %w", url, err)
 	}
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("get %s: %s", url, response.Status)
+		response.Body.Close()
+		return nil, fmt.Errorf("get %s: %s", url, response.Status)
 	}
-	body, err := io.ReadAll(response.Body)
+	return response.Body, nil
+}
+
+func fetchChecksum(url string) (string, error) {
+	responseBody, err := get(url)
+	if err != nil {
+		return "", err
+	}
+	defer responseBody.Close()
+	body, err := io.ReadAll(responseBody)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", url, err)
 	}
@@ -178,16 +184,13 @@ func fetchChecksum(url string) (string, error) {
 
 // fetchTo writes the body of url to target and returns its SHA-256 digest as hex.
 func fetchTo(target *os.File, url string) (string, error) {
-	response, err := client.Get(url)
+	body, err := get(url)
 	if err != nil {
-		return "", fmt.Errorf("get %s: %w", url, err)
+		return "", err
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("get %s: %s", url, response.Status)
-	}
+	defer body.Close()
 	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(target, hash), response.Body); err != nil {
+	if _, err := io.Copy(io.MultiWriter(target, hash), body); err != nil {
 		return "", fmt.Errorf("download %s to %s: %w", url, target.Name(), err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
@@ -225,13 +228,7 @@ func extractSrcMain(archivePath, topDir, targetDir string) error {
 }
 
 func hasSrcMain(path string) bool {
-	segments := strings.Split(path, "/")
-	for index := 0; index+1 < len(segments); index++ {
-		if segments[index] == "src" && segments[index+1] == "main" {
-			return true
-		}
-	}
-	return false
+	return strings.Contains("/"+path, "/src/main/")
 }
 
 func extractFile(entry *zip.File, targetPath string) error {
