@@ -4,13 +4,13 @@ package main
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 
-	"github.com/AlexKrupa/kotlin-lsp-android/internal/lsp"
+	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/proxy"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/server"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/sources"
 )
 
 func main() {
@@ -29,10 +29,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	conn, err := server.Ensure(rootPath, root.CacheDir(rootPath), os.Environ())
+	cacheDir := root.CacheDir(rootPath)
+	scriptPath, err := initscript.Write(cacheDir)
 	if err != nil {
 		return err
 	}
-	projects := []lsp.Project{{Type: "gradle", Path: (&url.URL{Scheme: "file", Path: rootPath}).String()}}
-	return proxy.Run(os.Stdin, os.Stdout, conn, projects)
+	env := server.Env(cacheDir, scriptPath)
+	// The server starts without library sources when this run fails.
+	if err := sources.Prepare(rootPath, cacheDir, env); err != nil {
+		fmt.Fprintf(os.Stderr, "kotlin-lsp-android: library sources: %v\n", err)
+	}
+	conn, err := server.Ensure(rootPath, cacheDir, env)
+	if err != nil {
+		return err
+	}
+	return proxy.Run(os.Stdin, os.Stdout, conn, sources.Projects(rootPath, cacheDir))
 }

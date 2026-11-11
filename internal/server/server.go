@@ -5,14 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
 )
 
 const (
@@ -23,6 +27,46 @@ const (
 
 // startTimeout is a variable so that tests can make it shorter.
 var startTimeout = 300 * time.Second
+
+// Env returns the environment of the server: the environment of this process, with the variables
+// that make the server run the init script at its import. Variables that this function sets
+// replace the inherited ones. The options variables keep the inherited value.
+func Env(cacheDir, scriptPath string) []string {
+	set := map[string]string{
+		"ORG_GRADLE_PROJECT_android.onlyEnableUnitTestForTheTestedBuildType": "false",
+		"KOTLIN_LSP_ANDROID_OUTPUT": cacheDir,
+		"KOTLIN_LSP_GRADLE_SOURCES": filepath.Join(root.CacheRoot(), "gradle-sources"),
+		"JAVA_TOOL_OPTIONS": appendOption(os.Getenv("JAVA_TOOL_OPTIONS"),
+			"-Dorg.gradle.isolated-projects=false"),
+		"IJ_JAVA_OPTIONS": appendOption(os.Getenv("IJ_JAVA_OPTIONS"),
+			"-Dcom.jetbrains.ls.imports.gradle.init.scripts="+scriptPath),
+	}
+	// The variant file is the only source: an inherited value must not stay.
+	content, err := os.ReadFile(filepath.Join(cacheDir, "variant"))
+	if err == nil {
+		set["LSP_ANDROID_VARIANT"] = strings.TrimSpace(string(content))
+	}
+
+	var env []string
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if _, replaced := set[name]; replaced || name == "LSP_ANDROID_VARIANT" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	for _, name := range slices.Sorted(maps.Keys(set)) {
+		env = append(env, name+"="+set[name])
+	}
+	return env
+}
+
+func appendOption(inherited, option string) string {
+	if inherited == "" {
+		return option
+	}
+	return inherited + " " + option
+}
 
 // Ensure returns a connection to the server of root. If no server listens, it starts one with
 // env. A lock on <cacheDir>/lock makes sure that clients which start at the same time share

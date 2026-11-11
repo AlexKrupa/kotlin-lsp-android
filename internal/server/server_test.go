@@ -186,3 +186,107 @@ func TestStopEndsServer(t *testing.T) {
 		t.Fatalf("port %s is still open", port)
 	}
 }
+
+// envValue returns the value of the last entry for name, and whether one exists.
+func envValue(env []string, name string) (string, bool) {
+	value, found := "", false
+	for _, entry := range env {
+		if rest, ok := strings.CutPrefix(entry, name+"="); ok {
+			value, found = rest, true
+		}
+	}
+	return value, found
+}
+
+func countEntries(env []string, name string) int {
+	count := 0
+	for _, entry := range env {
+		if strings.HasPrefix(entry, name+"=") {
+			count++
+		}
+	}
+	return count
+}
+
+func TestEnvAppendsToExistingOptions(t *testing.T) {
+	t.Setenv("JAVA_TOOL_OPTIONS", "-Xmx1g")
+	t.Setenv("IJ_JAVA_OPTIONS", "-Da=b")
+
+	env := Env(t.TempDir(), "/cache/script.gradle")
+
+	if got, _ := envValue(env, "JAVA_TOOL_OPTIONS"); got != "-Xmx1g -Dorg.gradle.isolated-projects=false" {
+		t.Errorf("JAVA_TOOL_OPTIONS = %q", got)
+	}
+	if got, _ := envValue(env, "IJ_JAVA_OPTIONS"); got != "-Da=b -Dcom.jetbrains.ls.imports.gradle.init.scripts=/cache/script.gradle" {
+		t.Errorf("IJ_JAVA_OPTIONS = %q", got)
+	}
+	for _, name := range []string{"JAVA_TOOL_OPTIONS", "IJ_JAVA_OPTIONS"} {
+		if count := countEntries(env, name); count != 1 {
+			t.Errorf("%s appears %d times, want 1", name, count)
+		}
+	}
+}
+
+func TestEnvSetsOptionsWithoutParentValues(t *testing.T) {
+	t.Setenv("JAVA_TOOL_OPTIONS", "")
+	t.Setenv("IJ_JAVA_OPTIONS", "")
+
+	env := Env(t.TempDir(), "/cache/script.gradle")
+
+	if got, _ := envValue(env, "JAVA_TOOL_OPTIONS"); got != "-Dorg.gradle.isolated-projects=false" {
+		t.Errorf("JAVA_TOOL_OPTIONS = %q", got)
+	}
+	if got, _ := envValue(env, "IJ_JAVA_OPTIONS"); got != "-Dcom.jetbrains.ls.imports.gradle.init.scripts=/cache/script.gradle" {
+		t.Errorf("IJ_JAVA_OPTIONS = %q", got)
+	}
+}
+
+func TestEnvSetsPathsAndFlags(t *testing.T) {
+	cacheRoot := t.TempDir()
+	t.Setenv("KOTLIN_LSP_CACHE", cacheRoot)
+	t.Setenv("KOTLIN_LSP_ANDROID_OUTPUT", "/stale")
+	cacheDir := filepath.Join(cacheRoot, "abc")
+
+	env := Env(cacheDir, "/cache/script.gradle")
+
+	want := map[string]string{
+		"ORG_GRADLE_PROJECT_android.onlyEnableUnitTestForTheTestedBuildType": "false",
+		"KOTLIN_LSP_ANDROID_OUTPUT": cacheDir,
+		"KOTLIN_LSP_GRADLE_SOURCES": filepath.Join(cacheRoot, "gradle-sources"),
+	}
+	for name, value := range want {
+		if got, _ := envValue(env, name); got != value {
+			t.Errorf("%s = %q, want %q", name, got, value)
+		}
+		if count := countEntries(env, name); count != 1 {
+			t.Errorf("%s appears %d times, want 1", name, count)
+		}
+	}
+}
+
+func TestEnvSetsVariantFromFile(t *testing.T) {
+	t.Setenv("LSP_ANDROID_VARIANT", "inherited")
+	cacheDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cacheDir, "variant"), []byte("prodDebug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	env := Env(cacheDir, "/cache/script.gradle")
+
+	if got, _ := envValue(env, "LSP_ANDROID_VARIANT"); got != "prodDebug" {
+		t.Errorf("LSP_ANDROID_VARIANT = %q, want prodDebug", got)
+	}
+	if count := countEntries(env, "LSP_ANDROID_VARIANT"); count != 1 {
+		t.Errorf("LSP_ANDROID_VARIANT appears %d times, want 1", count)
+	}
+}
+
+func TestEnvOmitsVariantWithoutFile(t *testing.T) {
+	t.Setenv("LSP_ANDROID_VARIANT", "inherited")
+
+	env := Env(t.TempDir(), "/cache/script.gradle")
+
+	if got, found := envValue(env, "LSP_ANDROID_VARIANT"); found {
+		t.Errorf("LSP_ANDROID_VARIANT = %q, want it not set", got)
+	}
+}
