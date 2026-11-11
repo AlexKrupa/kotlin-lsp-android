@@ -1,0 +1,231 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.nio.channels.FileChannel
+import java.nio.channels.OverlappingFileLockException
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import org.gradle.api.artifacts.ArtifactCollection
+import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.type.ArtifactTypeDefinition
+
+class LspFiles {
+    // A reader never sees a partial file.
+    static void writeAtomically(File target, Object content) {
+        target.parentFile.mkdirs()
+        def temp = File.createTempFile(target.name, '.tmp', target.parentFile)
+        temp.setText(JsonOutput.prettyPrint(JsonOutput.toJson(content)), StandardCharsets.UTF_8.name())
+        Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+}
+
+class LspVariants {
+    // The rule of the kotlin-lsp import, so that both select the same variant.
+    static String select(List<String> names, String requested) {
+        if (requested in names) {
+            return requested
+        }
+        def ordered = names.sort(false) { it.contains('debug') ? 0 : 1 }
+        def shortest = ordered*.length().min()
+        return ordered.find { it.length() == shortest }
+    }
+}
+
+abstract class LspLibrarySourcesModuleTask extends DefaultTask {
+    @Internal
+    List<ArtifactCollection> classpaths = []
+
+    @InputFiles
+    @PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract ConfigurableFileCollection getClasspathFiles()
+
+    @Input
+    abstract Property<String> getModulePath()
+
+    @Input
+    abstract ListProperty<String> getVariants()
+
+    @Input
+    @Optional
+    abstract Property<String> getSelectedVariant()
+
+    @OutputFile
+    abstract RegularFileProperty getModuleFile()
+
+    @TaskAction
+    void write() {
+        try {
+            def libraries = new TreeMap<String, Set<String>>()
+            classpaths.each { classpath ->
+                classpath.failures.each { logger.warn("kotlin-lsp-android: ${modulePath.get()}: ${it.message}") }
+                classpath.artifacts.each { artifact ->
+                    def id = artifact.id.componentIdentifier as ModuleComponentIdentifier
+                    def coordinate = "${id.group}:${id.module}:${id.version}".toString()
+                    libraries.computeIfAbsent(coordinate) { new TreeSet<String>() }.add(artifact.file.absolutePath)
+                }
+            }
+            LspFiles.writeAtomically(moduleFile.get().asFile, [
+                path     : modulePath.get(),
+                variants : variants.get(),
+                selected : selectedVariant.getOrNull(),
+                libraries: libraries,
+            ])
+        } catch (Exception e) {
+            logger.warn("kotlin-lsp-android: cannot write the libraries of ${modulePath.get()}. The old files stay.", e)
+        }
+    }
+}
+
+abstract class LspLibrarySourcesTask extends DefaultTask {
+    @InputFiles
+    @PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract ConfigurableFileCollection getModuleFiles()
+
+    @Input
+    abstract Property<String> getBuildPath()
+
+    @Internal
+    abstract Property<String> getOutputDir()
+
+    @TaskAction
+    void write() {
+        if (!outputDir.present) {
+            logger.warn('kotlin-lsp-android: KOTLIN_LSP_ANDROID_OUTPUT is not set. No files are written.')
+            return
+        }
+        try {
+            def librarySources = new File(outputDir.get(), 'library-sources')
+            def fragments = new File(librarySources, 'fragments')
+            def fragmentName = buildPath.get().replace(':', '_') + '.json'
+            LspFiles.writeAtomically(new File(fragments, fragmentName), fragment())
+            withLock(new File(fragments, '.lock')) {
+                merge(new File(outputDir.get()), librarySources, fragments)
+            }
+        } catch (Exception e) {
+            logger.warn("kotlin-lsp-android: cannot write the library sources of ${buildPath.get()}. The old files stay.", e)
+        }
+    }
+
+    Map fragment() {
+        def modules = new TreeMap<String, List<String>>()
+        def selected = new TreeMap<String, String>()
+        def libraries = new TreeMap<String, Set<String>>()
+        moduleFiles.files.findAll { it.exists() }.each { file ->
+            def module = new JsonSlurper().parse(file)
+            modules[module.path] = module.variants
+            if (module.selected != null) {
+                selected[module.path] = module.selected
+            }
+            module.libraries.each { coordinate, paths ->
+                libraries.computeIfAbsent(coordinate) { new TreeSet<String>() }.addAll(paths)
+            }
+        }
+        return [modules: modules, selected: selected, libraries: libraries]
+    }
+
+    // Other builds of the tree can merge in this JVM at the same time. The file lock only
+    // excludes other processes, for example the separate run next to a server import.
+    static void withLock(File lockFile, Closure action) {
+        lockFile.parentFile.mkdirs()
+        FileChannel.open(lockFile.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE).withCloseable { channel ->
+            while (true) {
+                try {
+                    channel.lock()
+                    break
+                } catch (OverlappingFileLockException ignored) {
+                    Thread.sleep(50)
+                }
+            }
+            action()
+        }
+    }
+
+    static void merge(File outputDir, File librarySources, File fragments) {
+        def modules = new TreeMap<String, List<String>>()
+        def selected = new TreeMap<String, String>()
+        def libraries = new TreeMap<String, Set<String>>()
+        fragments.listFiles().findAll { it.name.endsWith('.json') }.each { file ->
+            def fragment = new JsonSlurper().parse(file)
+            modules.putAll(fragment.modules)
+            selected.putAll(fragment.selected)
+            fragment.libraries.each { coordinate, paths ->
+                libraries.computeIfAbsent(coordinate) { new TreeSet<String>() }.addAll(paths)
+            }
+        }
+        def empty = new File(librarySources, 'empty')
+        empty.mkdirs()
+        def names = libraries.keySet().collect { "Sources: $it".toString() }
+        LspFiles.writeAtomically(new File(librarySources, 'workspace.json'), [
+            modules  : [[
+                name        : 'lsp-library-sources',
+                dependencies: [[type: 'moduleSource']] + names.collect { [type: 'library', name: it, scope: 'compile'] },
+                contentRoots: [[path: empty.absolutePath]],
+            ]],
+            libraries: libraries.collect { coordinate, paths ->
+                [name: "Sources: $coordinate".toString(), type: 'COMPILE', roots: paths.collect { [path: it] }]
+            },
+        ])
+        LspFiles.writeAtomically(new File(outputDir, 'variants.json'), [modules: modules, selected: selected])
+    }
+}
+
+void registerModuleTask(Project project) {
+    def variants = new LinkedHashMap<String, List<Configuration>>()
+    def androidComponents = project.extensions.getByName('androidComponents')
+    androidComponents.onVariants(androidComponents.selector().all(), { variant ->
+        try {
+            variants[variant.name] = [variant.compileConfiguration] + variant.nestedComponents*.compileConfiguration
+        } catch (Exception e) {
+            project.logger.warn("kotlin-lsp-android: cannot read the variant ${variant.name} of ${project.buildTreePath}", e)
+        }
+    } as Action)
+    def requested = project.providers.gradleProperty('lsp.android.variant')
+        .orElse(project.providers.systemProperty('lsp.android.variant'))
+        .orElse(project.providers.environmentVariable('LSP_ANDROID_VARIANT'))
+    def moduleTask = project.tasks.register('lspLibrarySourcesModule', LspLibrarySourcesModuleTask) { task ->
+        def names = variants.keySet().toList()
+        def selected = LspVariants.select(names, requested.getOrNull())
+        task.modulePath.set(project.buildTreePath)
+        task.variants.set(names)
+        task.selectedVariant.set(selected)
+        task.moduleFile.set(project.layout.buildDirectory.file('lsp-library-sources/module.json'))
+        variants.getOrDefault(selected, []).each { configuration ->
+            def classpath = configuration.incoming.artifactView { view ->
+                view.attributes { it.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, 'jar') }
+                view.componentFilter { it instanceof ModuleComponentIdentifier }
+                view.lenient(true)
+            }.artifacts
+            task.classpaths.add(classpath)
+            task.classpathFiles.from(classpath.artifactFiles)
+        }
+    }
+    project.rootProject.tasks.named('lspLibrarySources', LspLibrarySourcesTask) {
+        it.moduleFiles.from(moduleTask.flatMap { it.moduleFile })
+    }
+}
+
+gradle.rootProject { root ->
+    root.tasks.register('lspLibrarySources', LspLibrarySourcesTask) { task ->
+        task.buildPath.set(root.buildTreePath)
+        task.outputDir.set(root.providers.environmentVariable('KOTLIN_LSP_ANDROID_OUTPUT'))
+    }
+}
+
+gradle.allprojects { project ->
+    // The server import runs no named tasks. It runs prepareKotlinIdeaImport in each project of
+    // each build of the tree.
+    project.tasks.named({ it == 'prepareKotlinIdeaImport' } as Spec<String>).configureEach {
+        it.finalizedBy(project.rootProject.tasks.named('lspLibrarySources'))
+    }
+    ['com.android.application', 'com.android.library'].each { pluginId ->
+        project.pluginManager.withPlugin(pluginId) {
+            try {
+                registerModuleTask(project)
+            } catch (Exception e) {
+                project.logger.warn("kotlin-lsp-android: cannot add the libraries of ${project.buildTreePath}", e)
+            }
+        }
+    }
+}
