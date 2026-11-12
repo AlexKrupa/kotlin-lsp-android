@@ -253,6 +253,24 @@ write_files(root_dir, {
   ['other/build.gradle.kts'] = { 'val bar = foo()' },
 })
 
+-- Scripts for the references of `compileSdk`. The script in `build/` is in the model, so that a hit in
+-- it would only be missing because of the search.
+local block_script_lines = { 'android {', '    defaultConfig {', '        compileSdk = 35', '    }', '}' }
+local reference_script_paths = { 'references/a.gradle.kts', 'references/b.gradle.kts', 'references/variable.gradle.kts', 'build/generated.gradle.kts' }
+write_files(root_dir, {
+  [reference_script_paths[1]] = block_script_lines,
+  [reference_script_paths[2]] = vim.list_extend({ '// Both scripts configure the SDK.' }, block_script_lines),
+  [reference_script_paths[3]] = { 'val compileSdk = 35', 'println(compileSdk)' },
+  [reference_script_paths[4]] = block_script_lines,
+  -- The hits above the limit and at the limit.
+  ['references/limit.gradle.kts'] = vim.tbl_map(function()
+    return 'limitName()'
+  end, vim.fn.range(200)),
+  ['references/over-limit.gradle.kts'] = vim.tbl_map(function()
+    return 'overLimitName()'
+  end, vim.fn.range(201)),
+})
+
 local catalog_lines = {
   '[versions]',
   'ksp = "2.3.0"',
@@ -269,10 +287,14 @@ write_files(root_dir, { ['gradle/libs.versions.toml'] = catalog_lines })
 local sources = require 'kotlin_lsp_android.sources'
 local model_path = sources.cache_dir(root_dir) .. '/library-sources/gradle-scripts.json'
 vim.fn.mkdir(vim.fs.dirname(model_path), 'p')
+local scripts_in_model = {}
+for _, path in ipairs(vim.list_extend(vim.deepcopy(reference_script_paths), { 'references/limit.gradle.kts', 'references/over-limit.gradle.kts' })) do
+  scripts_in_model[assert(vim.uv.fs_realpath(root_dir .. '/' .. path))] = { sourcePath = 0, implicitImports = 1, pluginClasses = {} }
+end
 vim.fn.writefile({
   vim.json.encode({
     lists = { source_path, { 'org.gradle.api.*', 'org.gradle.kotlin.dsl.*', 'java.io.File' } },
-    scripts = {
+    scripts = vim.tbl_extend('error', scripts_in_model, {
       [assert(vim.uv.fs_realpath(settings_path))] = { sourcePath = 0, implicitImports = 1, pluginClasses = {} },
       [assert(vim.uv.fs_realpath(script_path))] = {
         sourcePath = 0,
@@ -283,7 +305,7 @@ vim.fn.writefile({
           ['org.jetbrains.kotlin.android'] = 'org.jetbrains.kotlin.gradle.plugin.KotlinAndroidPluginWrapper',
         },
       },
-    },
+    }),
   }),
 }, model_path)
 
@@ -514,6 +536,36 @@ assert_location(
 )
 
 assert_equal(lookup.hover(params_at('unknownBlock { foo }', 'unknownBlock'), root_dir), nil, 'hover on a location with no readable file')
+
+-- References: the script of the fixture and the two new scripts use `compileSdk` of
+-- `BaseDefaultConfig`. The variable `compileSdk` has no block, and the script in `build/` is not
+-- searched.
+local compile_sdk_target = {
+  uri = folder_uri(plugin_dir, 'com/example/dsl/BaseDefaultConfig.kt'),
+  range = { start = { line = line_index_of(base_default_config_lines, 'compileSdk'), character = 8 }, ['end'] = { line = 0, character = 0 } },
+}
+local function use_at(path, line_index, character)
+  local position = { line = line_index, character = character }
+  return { uri = vim.uri_from_fname(root_dir .. '/' .. path), range = { start = position, ['end'] = position } }
+end
+assert_equal(lookup.references('compileSdk', { compile_sdk_target }, root_dir), {
+  use_at('build.gradle.kts', line_index_of(script_lines, 'compileSdk = 36'), 8),
+  use_at('references/a.gradle.kts', 2, 8),
+  use_at('references/b.gradle.kts', 3, 8),
+}, 'references of a member in a block')
+assert_equal(lookup.references('compileSdk', { { uri = 'file:///other/Target.kt', range = compile_sdk_target.range } }, root_dir), {}, 'references of another target')
+
+-- The steps that do not use the position run once for all hits.
+other_library_names = {}
+write_files(root_dir, { [reference_script_paths[3]] = { 'remoteCall()', 'remoteCall()' } })
+assert_equal(lookup.references('remoteCall', { other_library_location }, root_dir), {
+  use_at(reference_script_paths[3], 0, 0),
+  use_at(reference_script_paths[3], 1, 0),
+}, 'references of a name from another library')
+assert_equal(other_library_names, { { 'remoteCall' } }, 'workspace/symbol queries for the references of a name from another library')
+
+assert_equal(#assert(lookup.references('limitName', {}, root_dir)), 0, 'references at the limit')
+assert_equal(lookup.references('overLimitName', {}, root_dir), nil, 'references above the limit')
 
 -- A script that is not in the model, for example a new file.
 other_library_names = {}

@@ -7,6 +7,10 @@ local work_dir = vim.fn.resolve(vim.fn.tempname())
 local project_dir = work_dir .. '/project'
 vim.fn.mkdir(project_dir, 'p')
 
+-- The fake server reads these when it starts.
+vim.env.FAKE_SOURCE_URI = vim.uri_from_fname(project_dir .. '/Declaration.kt')
+vim.env.FAKE_REFERENCE_URI = vim.uri_from_fname(project_dir .. '/Reference.kt')
+
 local messages = {}
 vim.notify = function(message)
   table.insert(messages, message)
@@ -82,6 +86,69 @@ assert(#lookup_params == 1 and lookup_params[1].textDocument.uri:match('build%.g
 assert(hover_in(project_dir .. '/B.kt') == nil, 'hover in another file is not the result of the server')
 assert(#lookup_params == 1, 'the lookup ran for a file that is not a Gradle script')
 assert(vim.deep_equal(hover_in(project_dir .. '/error.gradle.kts'), script_hover), 'hover after a server error in a Gradle script is not the result of the lookup')
+
+-- References from a Kotlin buffer: the server result and the uses in Gradle scripts. The script is
+-- not in the model, so the lookup asks the server, which finds the declaration of the definition.
+local function references_in(path, script_path, script_lines)
+  vim.fn.writefile({ 'class ' .. vim.fs.basename(path):gsub('%.kt$', '') }, path)
+  vim.fn.writefile(script_lines, script_path)
+  vim.cmd.edit(vim.fn.fnameescape(path))
+  local params = { textDocument = { uri = vim.uri_from_fname(path) }, position = { line = 0, character = 6 }, context = { includeDeclaration = false } }
+  local response = (assert(vim.lsp.get_client_by_id(client_id))):request_sync('textDocument/references', params, 10000)
+  return assert(response, 'no references response').result
+end
+local function location_at(uri, line_index, character)
+  local position = { line = line_index, character = character }
+  return { uri = uri, range = { start = position, ['end'] = position } }
+end
+local script_uri = vim.uri_from_fname(project_dir .. '/uses.gradle.kts')
+local server_reference = location_at(vim.env.FAKE_REFERENCE_URI, 0, 0)
+local references = references_in(project_dir .. '/C.kt', project_dir .. '/uses.gradle.kts', { 'val x = 1', 'C()' })
+assert(vim.deep_equal(references, { server_reference, location_at(script_uri, 1, 0) }), ('references = %s, want the server result and the script use'):format(vim.inspect(references)))
+
+messages = {}
+local many_uses = vim.tbl_map(function()
+  return 'D()'
+end, vim.fn.range(201))
+references = references_in(project_dir .. '/D.kt', project_dir .. '/uses.gradle.kts', many_uses)
+assert(vim.deep_equal(references, { server_reference }), ('references above the limit = %s, want the server result'):format(vim.inspect(references)))
+assert(
+  vim.deep_equal(messages, { 'kotlin_lsp: more than 200 matches of D in Gradle scripts, they are not in the references' }),
+  ('messages = %s, want the message for the limit'):format(vim.inspect(messages))
+)
+vim.fn.delete(project_dir .. '/uses.gradle.kts')
+
+-- References from a Gradle script: only the uses in Gradle scripts, which go to the targets of the
+-- definition lookup.
+script_lookup.definition = function()
+  return { script_location }
+end
+local references_script = project_dir .. '/references.gradle.kts'
+vim.fn.writefile({ 'android()', 'android()' }, references_script)
+vim.cmd.edit(vim.fn.fnameescape(references_script))
+local references_response = (assert(vim.lsp.get_client_by_id(client_id))):request_sync(
+  'textDocument/references',
+  { textDocument = { uri = vim.uri_from_fname(references_script) }, position = { line = 0, character = 0 }, context = { includeDeclaration = false } },
+  10000
+)
+local references_uri = vim.uri_from_fname(references_script)
+assert(
+  references_response and vim.deep_equal(references_response.result, { location_at(references_uri, 0, 0), location_at(references_uri, 1, 0) }),
+  ('references from a Gradle script = %s, want the uses in the script'):format(vim.inspect(references_response))
+)
+script_lookup.definition = script_definition
+
+-- All declarations with the name, in the order of the server.
+local symbol_locations = require('kotlin_lsp_android.sources').find_in_other_libraries(
+  { 'Name' },
+  { textDocument = { uri = vim.uri_from_fname(project_file) }, position = { line = 0, character = 0 } },
+  project_dir,
+  { 'Name' }
+)
+assert(
+  vim.deep_equal(symbol_locations, { location_at(vim.env.FAKE_SOURCE_URI, 0, 0), location_at(vim.env.FAKE_REFERENCE_URI, 0, 0) }),
+  ('declarations of a name in other libraries = %s, want both declarations of the name'):format(vim.inspect(symbol_locations))
+)
 
 assert(vim.lsp.get_client_by_id(client_id)):stop()
 assert(vim.wait(5000, function()

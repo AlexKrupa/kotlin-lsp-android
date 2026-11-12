@@ -1,7 +1,8 @@
 -- A kotlin-lsp stand-in on stdio for specs. `FAKE_CLASS_URI` and `FAKE_SOURCE_URI` are the
 -- definition results during and after the indexing. The indexing starts at `initialized` and at
 -- `test/beginIndexing`, and ends at `test/endIndexing`. After `test/classOnly`, each result is the
--- class file.
+-- class file. `textDocument/references` gives the location `FAKE_REFERENCE_URI`. `workspace/symbol`
+-- gives the location `FAKE_SOURCE_URI` for the query.
 local indexing = false
 local class_only = false
 local definition_count = 0
@@ -24,7 +25,7 @@ end
 
 local handlers = {
   initialize = function()
-    return { capabilities = { definitionProvider = true, hoverProvider = true } }
+    return { capabilities = { definitionProvider = true, hoverProvider = true, referencesProvider = true } }
   end,
   initialized = function()
     indexing = true
@@ -47,6 +48,16 @@ local handlers = {
   ['textDocument/definition'] = function()
     definition_count = definition_count + 1
     return { location((indexing or class_only) and vim.env.FAKE_CLASS_URI or vim.env.FAKE_SOURCE_URI) }
+  end,
+  ['textDocument/references'] = function()
+    return { location(vim.env.FAKE_REFERENCE_URI) }
+  end,
+  ['workspace/symbol'] = function(params)
+    return {
+      { name = params.query, location = location(vim.env.FAKE_SOURCE_URI) },
+      { name = params.query .. 'Other', location = location(vim.env.FAKE_SOURCE_URI) },
+      { name = params.query, location = location(vim.env.FAKE_REFERENCE_URI) },
+    }
   end,
   ['workspace/executeCommand'] = function()
     return { code = 'class C', language = 'kotlin' }

@@ -119,10 +119,16 @@ function M.roots_with_package(source_roots, package_name)
   end, source_roots)
 end
 
+---@param lines string[]? lines of the document, default the lines of its buffer
 ---@return string? identifier at the position of a request
-local function find_symbol(params)
-  local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
-  local line = vim.api.nvim_buf_get_lines(bufnr, params.position.line, params.position.line + 1, false)[1] or ''
+local function find_symbol(params, lines)
+  local line
+  if lines then
+    line = lines[params.position.line + 1] or ''
+  else
+    local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+    line = vim.api.nvim_buf_get_lines(bufnr, params.position.line, params.position.line + 1, false)[1] or ''
+  end
   local column = params.position.character + 1
   for start_column, identifier in line:gmatch('()([%w_]+)') do
     if column >= start_column and column < start_column + #identifier then

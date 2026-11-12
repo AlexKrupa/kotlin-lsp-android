@@ -63,6 +63,14 @@ local location_methods = {
   ['textDocument/typeDefinition'] = true,
 }
 
+---@param located lsp.Location|lsp.Location[]|lsp.LocationLink[]|nil
+---@return lsp.Location[]
+local function to_locations(located)
+  return vim.tbl_map(function(item)
+    return item.uri and item or { uri = item.targetUri, range = item.targetSelectionRange }
+  end, located == nil and {} or vim.islist(located) and located or { located })
+end
+
 -- The proxy exits with this code when the server closes the connection, for example after
 -- `variant set` in any Neovim instance.
 local server_closed_exit_code = 3
@@ -168,6 +176,42 @@ function M.cmd(dispatchers, config)
       end)
     end, notify_reply_callback)
   end
+  -- The server does not find the uses of a name in Gradle scripts. The server result stays.
+  ---@param params lsp.ReferenceParams
+  local function add_script_references(params, err, result, callback)
+    local sources = require('kotlin_lsp_android.sources')
+    local script_lookup = require('kotlin_lsp_android.script_lookup')
+    local name = sources.find_symbol(params)
+    local is_script = params.textDocument.uri:match('%.gradle%.kts$') ~= nil
+    ---@param targets lsp.Location[]?
+    local function reply(targets)
+      if not (name and targets and #targets > 0) then
+        return callback(err, result)
+      end
+      local hits = script_lookup.references(name, targets, config.root_dir)
+      if not hits then
+        vim.notify(
+          ('kotlin_lsp: more than %d matches of %s in Gradle scripts, they are not in the references'):format(script_lookup.reference_limit, name),
+          vim.log.levels.WARN
+        )
+        return callback(err, result)
+      end
+      if is_script then
+        return callback(nil, hits)
+      end
+      if err ~= nil then
+        return callback(err, result)
+      end
+      callback(nil, vim.list_extend(to_locations(result), hits))
+    end
+    if is_script then
+      return reply(script_lookup.definition(params, config.root_dir))
+    end
+    request_located('textDocument/definition', { textDocument = params.textDocument, position = params.position }, function(_, located)
+      reply(to_locations(located))
+    end)
+  end
+
   rpc.request = function(method, params, callback, notify_reply_callback)
     if method == 'initialize' then
       return request(method, params, function(err, result)
@@ -188,6 +232,14 @@ function M.cmd(dispatchers, config)
             return callback(nil, hover)
           end
           callback(err, result)
+        end)
+      end, notify_reply_callback)
+    end
+    if method == 'textDocument/references' then
+      return request(method, params, function(err, result)
+        -- The lookup waits for `rg` and `unzip`, which a fast event cannot do.
+        vim.schedule(function()
+          add_script_references(params, err, result, callback)
         end)
       end, notify_reply_callback)
     end

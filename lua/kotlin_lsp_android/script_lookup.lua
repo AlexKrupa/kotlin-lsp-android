@@ -536,15 +536,16 @@ end
 
 ---@param params lsp.TextDocumentPositionParams for a `.gradle.kts` file
 ---@param root_dir string
+---@param script_lines string[]? lines of the script, default the lines of its buffer
 ---@return lsp.Location[]?
-function M.definition(params, root_dir)
-  local symbol = sources.find_symbol(params)
+function M.definition(params, root_dir, script_lines)
+  local symbol = sources.find_symbol(params, script_lines)
   local model = script_model.get(root_dir, vim.uri_to_fname(params.textDocument.uri))
   if not model then
     -- Step 6 for a script with no entry, for example a new file.
     return symbol and sources.find_in_other_libraries({ symbol }, params, root_dir)
   end
-  local lines = vim.api.nvim_buf_get_lines(vim.uri_to_bufnr(params.textDocument.uri), 0, -1, false)
+  local lines = script_lines or vim.api.nvim_buf_get_lines(vim.uri_to_bufnr(params.textDocument.uri), 0, -1, false)
   local line = lines[params.position.line + 1] or ''
   local column = params.position.character + 1
   local found = find_plugin(line, column, model, params, root_dir)
@@ -562,7 +563,58 @@ function M.definition(params, root_dir)
     or sources.find_in_other_libraries({ symbol }, params, root_dir)
 end
 
--- Hover
+M.reference_limit = 200
+
+---@param name string
+---@param targets lsp.Location[] declarations of the name
+---@return lsp.Location[]? uses of the name in Gradle scripts that go to a target, nil above the limit
+function M.references(name, targets, root_dir)
+  -- `-o` gives a hit for each use of the name in a line.
+  local command = { 'rg', '-w', '-o', '-n', '--column', '--no-heading', '--with-filename', '-g', '*.gradle.kts', '-g', '!**/build/**', '-e', name, root_dir }
+  local output = vim.system(command, { text = true }):wait().stdout
+  local hits = {}
+  for line in vim.gsplit(vim.trim(output), '\n', { trimempty = true }) do
+    local path, line_number, column = line:match('^(.-):(%d+):(%d+):')
+    table.insert(hits, { path = path, line_index = tonumber(line_number) - 1, character = tonumber(column) - 1 })
+  end
+  if #hits > M.reference_limit then
+    return nil
+  end
+  table.sort(hits, function(first, second)
+    if first.path ~= second.path then
+      return first.path < second.path
+    end
+    if first.line_index ~= second.line_index then
+      return first.line_index < second.line_index
+    end
+    return first.character < second.character
+  end)
+  ---@type table<string, string[]>
+  local lines_by_path = {}
+  local locations = {}
+  unpositioned_by_source_path = {}
+  for _, hit in ipairs(hits) do
+    lines_by_path[hit.path] = lines_by_path[hit.path] or vim.fn.readfile(hit.path)
+    local position = { line = hit.line_index, character = hit.character }
+    local uri = vim.uri_from_fname(hit.path)
+    local ok, found = pcall(M.definition, { textDocument = { uri = uri }, position = position }, root_dir, lines_by_path[hit.path])
+    if not ok then
+      unpositioned_by_source_path = nil
+      error(found, 0)
+    end
+    found = found or {}
+    local is_use = vim.iter(found):any(function(location)
+      return vim.iter(targets):any(function(target)
+        return location.uri == target.uri and location.range.start.line == target.range.start.line
+      end)
+    end)
+    if is_use then
+      table.insert(locations, { uri = uri, range = { start = position, ['end'] = position } })
+    end
+  end
+  unpositioned_by_source_path = nil
+  return locations
+end
 
 ---@return integer first_index first line of the annotations above the declaration
 ---@return string[] doc_lines text of the KDoc or Javadoc comment directly above them
