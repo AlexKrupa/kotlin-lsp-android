@@ -261,6 +261,7 @@ local script_lines = {
   '    kotlin("jvm")',
   '    alias(libs.plugins.ksp)',
   '    id("com.example.convention")',
+  '    id("com.unknown.android")',
   '}',
   '',
   'android {',
@@ -420,6 +421,8 @@ assert_location(
   2,
   'Kotlin plugin id'
 )
+-- The word in the string of an unknown plugin id is not a name of the script.
+assert_equal(lookup.definition(params_at('id("com.unknown.android")', 'android'), root_dir), nil, 'unknown plugin id')
 assert_location(lookup.definition(params_at('kotlin("jvm")', 'jvm'), root_dir), jar_uri(kotlin_plugin_jar, 'KotlinPluginWrapper.kt'), 2, 'class in a file outside its package folder')
 
 assert_location(
@@ -503,7 +506,7 @@ assert_equal(
 local wide_hover = hover_value('import com.example.Wide', 'Wide')
 assert_equal(#vim.split(wide_hover, '\n'), 40 + 2, 'lines of a declaration over the limit, with the fence')
 
--- Review focus 2: braces in strings and comments.
+-- Braces in strings and comments do not open or close a block.
 local lines = {
   'android {',
   '  // }',
@@ -554,10 +557,10 @@ assert_location(
   'member of the block receiver'
 )
 
-local android_accessor_uri = folder_uri(accessors_dir, 'org/gradle/kotlin/dsl/Accessors1.kt')
+local accessor_uri = folder_uri(accessors_dir, 'org/gradle/kotlin/dsl/Accessors1.kt')
 local function accessor_at(line_index)
   local position = { line = line_index, character = 0 }
-  return { uri = android_accessor_uri, range = { start = position, ['end'] = position } }
+  return { uri = accessor_uri, range = { start = position, ['end'] = position } }
 end
 assert_equal(lookup.definition(params_at('android {', 'android'), root_dir), { accessor_at(7), accessor_at(13) }, 'accessor with the name in the package of another receiver')
 
@@ -582,15 +585,14 @@ assert_location(
   'member in a block from a member extension of the outer receiver'
 )
 
-local foo_accessor_uri = folder_uri(accessors_dir, 'org/gradle/kotlin/dsl/Accessors1.kt')
 local foo_accessor_line_index = 19
-assert_location(lookup.definition(params_at('unknownBlock { foo }', 'foo'), root_dir), foo_accessor_uri, foo_accessor_line_index, 'name in a block with no type')
-assert_location(lookup.definition(params_at('deep { foo }', 'foo'), root_dir), foo_accessor_uri, foo_accessor_line_index, 'member after 6 supertype levels')
+assert_location(lookup.definition(params_at('unknownBlock { foo }', 'foo'), root_dir), accessor_uri, foo_accessor_line_index, 'name in a block with no type')
+assert_location(lookup.definition(params_at('deep { foo }', 'foo'), root_dir), accessor_uri, foo_accessor_line_index, 'member after 6 supertype levels')
 assert_location(lookup.definition(params_at('deep { bar }', 'bar'), root_dir), folder_uri(plugin_dir, 'com/example/Deep5.kt'), 3, 'member after 5 supertype levels')
 
 assert_equal(other_library_names, {}, 'workspace/symbol queries before the cases that need the server')
 
--- Review focus 4: a catalog from another file, then no catalog file.
+-- A catalog from another file, then no catalog file: the getter of the accessor class.
 local getter_uri = folder_uri(dependency_accessors_dir, 'org/gradle/accessors/dm/LibrariesForLibs.java')
 assert_location(lookup.definition(params_at('libs.foo', 'foo'), root_dir), getter_uri, 3, 'catalog with no key')
 vim.fn.delete(catalog_path)

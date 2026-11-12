@@ -117,6 +117,18 @@ func TestRunKeepsOldModelWhenClientFails(t *testing.T) {
 	}
 }
 
+func TestRunErrorHasNoStderrPartWhenStderrIsEmpty(t *testing.T) {
+	useFakeJava(t, "#!/bin/sh\nexit 1\n")
+	cacheDir, folder := newCache(t)
+	writeGradleHome(t, folder, "/gradle/home")
+
+	err := Run("/some/root", cacheDir)
+
+	if err == nil || strings.HasSuffix(err.Error(), ": ") {
+		t.Fatalf("error = %q, want no empty stderr part", err)
+	}
+}
+
 func TestRunWaitsForLock(t *testing.T) {
 	useFakeJava(t, recordingJava)
 	cacheDir, folder := newCache(t)

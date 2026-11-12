@@ -174,6 +174,8 @@ end
 -- Step 0: the string argument of `id("...")` or `kotlin("...")`.
 local plugin_id_prefixes = { id = '', kotlin = 'org.jetbrains.kotlin.' }
 
+-- A word in the string of a plugin id is not a name of the script, so the other steps do not run.
+---@return boolean is_plugin_id
 ---@return lsp.Location[]?
 local function find_plugin(lines, line, column, model, params, root_dir)
   for function_name, prefix in pairs(plugin_id_prefixes) do
@@ -181,18 +183,18 @@ local function find_plugin(lines, line, column, model, params, root_dir)
       if column >= first_column - 1 and column <= quote_column then
         local class_name = model.plugin_classes[prefix .. plugin_id]
         if not class_name then
-          return nil
+          return true, nil
         end
         local found = resolve_type({ class_name }, model.source_path)
         if found then
-          return { sources.to_location(found.uri_for, found) }
+          return true, { sources.to_location(found.uri_for, found) }
         end
         -- The server finds the classes of `build-logic`.
-        return sources.find_in_other_libraries({ class_name }, params, root_dir, lines)
+        return true, sources.find_in_other_libraries({ class_name }, params, root_dir, lines)
       end
     end
   end
-  return nil
+  return false, nil
 end
 
 -- Step 1: `libs.<a>.<b>...`. Only the `libs` catalog has a file at a fixed path.
@@ -664,8 +666,8 @@ function M.definition(params, root_dir, script_lines)
   end
   local line = lines[params.position.line + 1] or ''
   local column = params.position.character + 1
-  local found = find_plugin(lines, line, column, model, params, root_dir)
-  if found then
+  local is_plugin_id, found = find_plugin(lines, line, column, model, params, root_dir)
+  if is_plugin_id then
     return found
   end
   if not symbol then

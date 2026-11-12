@@ -71,6 +71,18 @@ local function to_locations(located)
   end, located == nil and {} or vim.islist(located) and located or { located })
 end
 
+-- An error in a lookup, for example for a jar that cannot be read, must not leave a request with no
+-- reply. The reply is then the server result.
+---@return boolean ok
+---@return any result of the lookup, or the error
+local function try_lookup(lookup, ...)
+  local ok, result = pcall(lookup, ...)
+  if not ok then
+    vim.notify_once(tostring(result), vim.log.levels.WARN)
+  end
+  return ok, result
+end
+
 ---@param hover lsp.Hover?
 ---@return boolean
 local function has_contents(hover)
@@ -192,7 +204,12 @@ function M.cmd(dispatchers, config)
       local was_indexing = indexing.is_active()
       -- The search waits for `rg` and `unzip`, which a fast event cannot do.
       vim.schedule(function()
-        on_located(err, err == nil and require('kotlin_lsp_android.sources').to_sources(result, params, config.root_dir) or result, was_indexing)
+        local located = result
+        if err == nil then
+          local ok, mapped = try_lookup(require('kotlin_lsp_android.sources').to_sources, result, params, config.root_dir)
+          located = ok and mapped or result
+        end
+        on_located(err, located, was_indexing)
       end)
     end, notify_reply_callback)
   end
@@ -208,7 +225,10 @@ function M.cmd(dispatchers, config)
       if not (name and targets and #targets > 0) then
         return callback(err, result)
       end
-      local hits = script_lookup.references(name, targets, config.root_dir)
+      local ok, hits = try_lookup(script_lookup.references, name, targets, config.root_dir)
+      if not ok then
+        return callback(err, result)
+      end
       if not hits then
         vim.notify(
           ('kotlin_lsp: more than %d matches of %s in Gradle scripts, they are not in the references'):format(script_lookup.reference_limit, name),
@@ -225,7 +245,8 @@ function M.cmd(dispatchers, config)
       callback(nil, vim.list_extend(to_locations(result), hits))
     end
     if is_script then
-      return reply(script_lookup.definition(params, config.root_dir))
+      local ok, targets = try_lookup(script_lookup.definition, params, config.root_dir)
+      return reply(ok and targets or nil)
     end
     request_located('textDocument/definition', { textDocument = params.textDocument, position = params.position }, function(_, located)
       reply(to_locations(located))
@@ -247,8 +268,8 @@ function M.cmd(dispatchers, config)
         end
         -- The lookup waits for `rg` and `unzip`, which a fast event cannot do.
         vim.schedule(function()
-          local hover = require('kotlin_lsp_android.script_lookup').hover(params, config.root_dir)
-          if hover then
+          local ok, hover = try_lookup(require('kotlin_lsp_android.script_lookup').hover, params, config.root_dir)
+          if ok and hover then
             return callback(nil, hover)
           end
           callback(err, result)

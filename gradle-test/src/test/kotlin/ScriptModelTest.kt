@@ -6,6 +6,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -26,16 +27,18 @@ class ScriptModelTest : FixtureBuildTest() {
 
     private fun startClient(root: File, gradleHome: String): ClientResult {
         val modelFile = File(tempDir, "out/library-sources/gradle-scripts.json")
+        // A file, not a pipe: a read of the pipe waits for the end of the process with no timeout.
+        val outputFile = File(tempDir, "client-output.txt")
         val process = ProcessBuilder(
             "java", "-cp", "$gradleHome/lib/*", scriptModel.absolutePath,
             root.absolutePath, gradleHome, modelFile.absolutePath,
         )
             .redirectErrorStream(true)
+            .redirectOutput(outputFile)
             .apply { environment()["GRADLE_USER_HOME"] = testKitDir.absolutePath }
             .start()
-        val output = process.inputStream.bufferedReader().readText()
         assertTrue(process.waitFor(5, TimeUnit.MINUTES), "The client did not end")
-        return ClientResult(process.exitValue(), output, modelFile)
+        return ClientResult(process.exitValue(), outputFile.readText(), modelFile)
     }
 
     /** Runs the init script, which downloads the plugins and writes the Gradle home. */
@@ -131,6 +134,6 @@ class ScriptModelTest : FixtureBuildTest() {
 
         assertEquals(1, result.exitCode, result.output)
         assertTrue("missing" in result.output, result.output)
-        assertTrue(!result.modelFile.exists())
+        assertFalse(result.modelFile.exists())
     }
 }

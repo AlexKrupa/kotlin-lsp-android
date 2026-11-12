@@ -104,6 +104,27 @@ assert(
   definition_response and definition_response.err == nil and vim.deep_equal(definition_response.result, { script_location }),
   ('definition in a Gradle script = %s, want the result of the lookup'):format(vim.inspect(definition_response))
 )
+
+-- An error in a lookup, for example a jar that cannot be read, gives the server result and one
+-- message.
+messages = {}
+local function fail_lookup()
+  error('kotlin_lsp: cannot read a jar')
+end
+script_lookup.definition = fail_lookup
+for _ = 1, 2 do
+  definition_response = assert(vim.lsp.get_client_by_id(client_id)):request_sync(
+    'textDocument/definition',
+    { textDocument = { uri = vim.uri_from_fname(project_dir .. '/build.gradle.kts') }, position = { line = 0, character = 0 } },
+    5000
+  )
+  assert(definition_response and definition_response.err == nil and definition_response.result == nil, ('definition after an error in the lookup = %s, want the server result'):format(vim.inspect(definition_response)))
+end
+local script_hover_lookup = script_lookup.hover
+script_lookup.hover = fail_lookup
+assert(vim.deep_equal(hover_in(project_dir .. '/build.gradle.kts'), { contents = { kind = 'markdown', value = '' } }), 'hover after an error in the lookup is not the server result')
+script_lookup.hover = script_hover_lookup
+assert(#messages == 1 and messages[1]:find('cannot read a jar', 1, true), ('messages = %s, want one message about the error'):format(vim.inspect(messages)))
 script_lookup.definition = script_definition
 
 -- References from a Kotlin buffer: the server result and the uses in Gradle scripts. The script is
@@ -135,6 +156,12 @@ assert(
   vim.deep_equal(messages, { 'kotlin_lsp: more than 200 matches of D in Gradle scripts, they are not in the references' }),
   ('messages = %s, want the message for the limit'):format(vim.inspect(messages))
 )
+
+local script_references = script_lookup.references
+script_lookup.references = fail_lookup
+references = references_in(project_dir .. '/E.kt', project_dir .. '/uses.gradle.kts', { 'E()' })
+assert(vim.deep_equal(references, { server_reference }), ('references after an error in the lookup = %s, want the server result'):format(vim.inspect(references)))
+script_lookup.references = script_references
 vim.fn.delete(project_dir .. '/uses.gradle.kts')
 
 -- References from a Gradle script: only the uses in Gradle scripts, which go to the targets of the

@@ -1,3 +1,4 @@
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -187,7 +188,7 @@ public class ScriptModel {
             return;
         }
         Properties properties = new Properties();
-        properties.load(new java.io.ByteArrayInputStream(descriptor));
+        properties.load(new ByteArrayInputStream(descriptor));
         String implementationClass = properties.getProperty(IMPLEMENTATION_CLASS_KEY);
         if (implementationClass == null) {
             return;

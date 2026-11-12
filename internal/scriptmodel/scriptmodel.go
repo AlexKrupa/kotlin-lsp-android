@@ -64,7 +64,11 @@ func Run(root, cacheDir string) error {
 	command.Stdout = os.Stderr
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("script model client for %s: %w: %s", root, err, lastLines(stderr.String(), stderrLineCount))
+		cause := lastLines(stderr.String(), stderrLineCount)
+		if cause == "" {
+			return fmt.Errorf("script model client for %s: %w", root, err)
+		}
+		return fmt.Errorf("script model client for %s: %w: %s", root, err, cause)
 	}
 	if err := os.Rename(output.Name(), modelPath); err != nil {
 		return fmt.Errorf("rename %s to %s: %w", output.Name(), modelPath, err)

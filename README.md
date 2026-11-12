@@ -127,8 +127,8 @@ kotlin-lsp does not analyze `.gradle.kts` files (kotlin-lsp issue #55). For thes
 answers these requests with a name lookup in the plugin:
 
 - Go to definition, declaration, implementation, and type definition.
-- Hover. `cmd` sends the request to the server first. If the result is empty, it shows the
-  declaration with its KDoc or Javadoc.
+- Hover. `cmd` sends the request to the server first. If the result is empty or an error, it shows
+  the declaration with its KDoc or Javadoc.
 - References. From a `.gradle.kts` file, `cmd` returns the uses in the `.gradle.kts` files of the
   root. From a `.kt` file or a library file, it adds these uses to the server result. Above 200
   matches of the name, it returns only the server result and shows a message.
@@ -138,13 +138,13 @@ of the blocks around the cursor. The first step with a result gives the result:
 
 | Name at the cursor | Example | Result |
 | --- | --- | --- |
-| Plugin id, cursor in the string | `id("com.android.application")`, `kotlin("android")` | The plugin class. `workspace/symbol` finds a class of `build-logic`. |
+| Plugin id, cursor in the string | `id("com.android.application")`, `kotlin("android")` | The plugin class. `workspace/symbol` finds a class of `build-logic`. An unknown id gives no result. |
 | Version catalog | `libs.androidx.core.ktx`, `alias(libs.plugins.ksp)` | The key in `gradle/libs.versions.toml` |
 | Import | `import com.android.build.api.dsl.ManagedVirtualDevice` | The imported declaration |
 | Name in a block | `compileSdk` in `android { defaultConfig { } }` | A member of the block receiver, then of the outer block receivers, also in the supertypes |
 | Implicit import | `Project`, `JavaVersion` | The type |
 | Accessor or Kotlin DSL | `android`, `implementation(...)` | The generated accessors and the Kotlin DSL API |
-| Other names | | The plain name lookup: up to 30 declarations, then `workspace/symbol` |
+| Other names | | `workspace/symbol`, up to 30 results |
 
 The lookup extracts only the sources jars that have the package of the name, to the Neovim cache
 folder.
@@ -163,13 +163,15 @@ a running Gradle daemon, a run takes about 1 s.
 
 The plugin runs `script-model` in the background:
 
-- When the work done progress (`$/progress`) of the client ends, for example after an import
-- If `gradle-scripts.json` is missing: on a request from a `.gradle.kts` file
+- When the work done progress (`$/progress`) of the client ends, for example after an import. If
+  a run is in progress, the plugin starts one more run after it.
+- If `gradle-scripts.json` is missing or is not valid JSON: on a request from a `.gradle.kts` file.
+  After a failed run, a request does not start a run. The next end of the work done progress does.
 
-Until the run ends, the lookup uses the current model file. If there is no model, the lookup uses
-the plain name lookup. The same applies to a script with no entry in the model, for example a new
-file. If a run fails, for example because `java` is missing, Neovim shows one warning for each root,
-with the end of the error output.
+Until the run ends, the lookup uses the current model file. If there is no valid model file, the
+lookup uses only `workspace/symbol`, up to 30 results. The same applies to a script with no entry in
+the model, for example a new file. If a run fails, for example because `java` is missing, Neovim
+shows one warning for each root, with the end of the error output.
 
 ## Files
 
@@ -188,7 +190,7 @@ Files in `<cache root>/<key>/`:
 | `variants.json` | The variants of each module |
 | `missing-sources.json` | The SDK and Gradle sources that the background download must fetch |
 | `lsp-library-sources.gradle` | The init script that the binary writes at each start |
-| `ScriptModel.java` | The Tooling API client that `script-model` writes at each run |
+| `ScriptModel.java` | The Tooling API client of `script-model`. If the content is different, a run writes it again. |
 | `script-model.lock` | Lock that allows one `script-model` run at a time. A second run waits. |
 | `library-sources/workspace.json` | The libraries with their sources, for the server |
 | `library-sources/gradle-home.txt` | The Gradle distribution of the build, for `script-model` |
@@ -215,8 +217,10 @@ Files in `<cache root>/`, shared by all roots:
   receiver type goes to the steps after the block step.
 - The references from `.gradle.kts` files contain only the uses that go to the same declaration. A
   use that goes to an override of the declaration is not in the list.
-- In a large build, a lookup in a `.gradle.kts` file takes some seconds. The references do one
-  lookup for each match of the name.
+- Neovim does not respond during a lookup in a `.gradle.kts` file. In nowinandroid, the first lookup
+  in a Neovim session takes about 1 s: it reads the package lists of the jars and the package of
+  each source file. A next lookup takes less than 0.1 s. The references do one lookup for each match
+  of the name, for example 1.8 s for the 31 matches of `namespace`.
 - No `R` class in library modules (kotlin-lsp issue #280).
 - No fixes or patches for `kotlin-lsp`: the repo only works around it.
 
