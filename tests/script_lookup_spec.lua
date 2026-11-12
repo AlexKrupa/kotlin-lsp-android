@@ -108,6 +108,8 @@ local plugin_files = {
     '',
     'interface CommonExtension {',
     '    fun defaultConfig(action: ApplicationDefaultConfig.() -> Unit)',
+    '',
+    '    var buildToolsVersion: String',
     '}',
   },
   ['com/example/dsl/ApplicationDefaultConfig.kt'] = { 'package com.example.dsl', '', 'interface ApplicationDefaultConfig : BaseDefaultConfig' },
@@ -228,6 +230,7 @@ local script_lines = {
   '    namespace = "com.example.app"',
   '    defaultConfig {',
   '        compileSdk = 36',
+  '        buildToolsVersion = "36.0.0"',
   '    }',
   '}',
   '',
@@ -503,6 +506,14 @@ assert_location(
   folder_uri(plugin_dir, 'com/example/ApplicationExtension.kt'),
   line_index_of(application_extension_lines, 'namespace'),
   'member of the block receiver'
+)
+
+-- Kotlin searches the receiver of the outer block after the receiver of the inner block.
+assert_location(
+  lookup.definition(params_at('buildToolsVersion = ', 'buildToolsVersion'), root_dir),
+  folder_uri(plugin_dir, 'com/example/CommonExtension.kt'),
+  7,
+  'member of the outer block receiver'
 )
 
 local foo_accessor_uri = folder_uri(accessors_dir, 'org/gradle/kotlin/dsl/Accessors1.kt')

@@ -460,6 +460,8 @@ local function first_receivers(script_path)
   return project_first_receivers
 end
 
+-- Kotlin searches the name in the receiver of the inner block first, then in the receivers of the
+-- outer blocks, for example `compileSdk` of `android { }` in `android { defaultConfig { } }`.
 ---@param position lsp.Position
 ---@return lsp.Location[]?
 local function find_in_receiver(lines, position, symbol, model, script_path)
@@ -470,19 +472,27 @@ local function find_in_receiver(lines, position, symbol, model, script_path)
       table.insert(receivers, receiver)
     end
   end
+  local receivers_inner_first = { receivers }
   for _, name in ipairs(M.enclosing_blocks(lines, position)) do
     local block_receiver
     for _, receiver in ipairs(receivers) do
       block_receiver = block_receiver or block_type(receiver, name, model.source_path)
     end
+    -- The name can be a member of the unknown receiver, so an outer receiver is only a guess.
+    if not block_receiver then
+      return nil
+    end
     receivers = { block_receiver }
+    table.insert(receivers_inner_first, 1, receivers)
   end
-  for _, receiver in ipairs(receivers) do
-    local found = find_in_hierarchy(receiver, model.source_path, function(declared_type, type_lines)
-      return to_locations(find_members(declared_type, type_lines, symbol))
-    end)
-    if found then
-      return found
+  for _, level_receivers in ipairs(receivers_inner_first) do
+    for _, receiver in ipairs(level_receivers) do
+      local found = find_in_hierarchy(receiver, model.source_path, function(declared_type, type_lines)
+        return to_locations(find_members(declared_type, type_lines, symbol))
+      end)
+      if found then
+        return found
+      end
     end
   end
   return nil
