@@ -153,6 +153,12 @@ end), 'no second run')
 vim.wait(500)
 assert_equal(#warnings, 1, 'warning count after a second failed run')
 
+-- After a failed run, a request does not start a run. Only a refresh, for example at the end of the
+-- next import, starts one.
+assert(script_model.get(failing_root, failing_root .. '/build.gradle.kts') == nil, 'get after a failed run is not nil')
+vim.wait(500)
+assert_equal(call_count(), 6, 'calls after get with a failed run')
+
 -- Another root gets its own warning.
 script_model.refresh(new_root('failing-too'))
 assert(vim.wait(5000, function()

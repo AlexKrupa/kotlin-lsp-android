@@ -11,6 +11,10 @@ local running_roots = {}
 local pending_roots = {}
 ---@type table<string, boolean> roots that already got a warning
 local warned_roots = {}
+-- With a broken build, each run configures the whole build and fails again, so a request does not
+-- start a run after a failed run. `refresh` does.
+---@type table<string, boolean> roots with a failed last run
+local failed_roots = {}
 ---@type table<string, { mtime: { sec: integer, nsec: integer }, model: table }>
 local model_by_path = {}
 -- It changes when a model file is read again, for example after an import.
@@ -39,9 +43,11 @@ function M.refresh(root_dir)
     return
   end
   running_roots[root_dir] = true
+  failed_roots[root_dir] = nil
   local started, err = pcall(vim.system, { executable, 'script-model' }, { cwd = root_dir, text = true }, vim.schedule_wrap(function(result)
     running_roots[root_dir] = nil
     if result.code ~= 0 then
+      failed_roots[root_dir] = true
       warn(root_dir, vim.trim(result.stderr))
     end
     if pending_roots[root_dir] then
@@ -51,6 +57,7 @@ function M.refresh(root_dir)
   end))
   if not started then
     running_roots[root_dir] = nil
+    failed_roots[root_dir] = true
     warn(root_dir, tostring(err))
   end
 end
@@ -86,7 +93,9 @@ end
 function M.get(root_dir, script_path)
   local model = read_model(root_dir)
   if not model then
-    M.refresh(root_dir)
+    if not failed_roots[root_dir] and not running_roots[root_dir] then
+      M.refresh(root_dir)
+    end
     return nil
   end
   -- The model has real paths.
