@@ -15,13 +15,16 @@ dependencies {
 }
 
 val initScript = layout.projectDirectory.file("../gradle/lsp-library-sources.gradle")
+val scriptModel = layout.projectDirectory.file("../gradle/ScriptModel.java")
 val fixtures = layout.projectDirectory.dir("fixtures")
 
 tasks.test {
     useJUnitPlatform()
     inputs.file(initScript).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(scriptModel).withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir(fixtures).withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("initScript", initScript.asFile.absolutePath)
+    systemProperty("scriptModel", scriptModel.asFile.absolutePath)
     systemProperty("fixtures", fixtures.asFile.absolutePath)
     // Outside of the temp dirs of the tests, so that the downloads of the fixture builds stay
     // between test runs.

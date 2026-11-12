@@ -1,7 +1,12 @@
 plugins {
-    java
+    `java-gradle-plugin`
 }
 
-dependencies {
-    implementation(gradleApi())
+gradlePlugin {
+    plugins {
+        create("convention") {
+            id = "fixture.convention"
+            implementationClass = "ConventionPlugin"
+        }
+    }
 }

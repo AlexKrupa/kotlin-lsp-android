@@ -8,54 +8,14 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.gradle.testkit.runner.BuildResult
-import org.gradle.testkit.runner.GradleRunner
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
 
-class LibrarySourcesTest {
+class LibrarySourcesTest : FixtureBuildTest() {
 
-    @TempDir
-    lateinit var tempDir: File
-
-    private val initScript = File(System.getProperty("initScript"))
-    private val fixtures = File(System.getProperty("fixtures"))
-    private val testKitDir = File(System.getProperty("testKitDir"), "LibrarySourcesTest")
-    /** The version of the wrapper, which TestKit runs. It is a `-bin` distribution with no sources. */
-    private val gradleVersion = "9.7.0"
     /** The Kotlin version in the `lib` folder of that Gradle distribution. */
     private val gradleKotlinVersion = "2.4.0"
-    private val androidHome = requireNotNull(System.getenv("ANDROID_HOME")) {
-        "Set ANDROID_HOME to the Android SDK folder"
-    }
-
-    private fun copyFixture(name: String, target: File = File(tempDir, name)): File {
-        File(fixtures, name).copyRecursively(target)
-        return target
-    }
-
-    private fun runInitScript(
-        projectDir: File,
-        outputDir: File,
-        arguments: List<String> = emptyList(),
-        environment: Map<String, String> = emptyMap(),
-    ): BuildResult {
-        // AGP fails when ANDROID_SDK_ROOT and ANDROID_HOME name different SDKs.
-        val baseEnvironment = System.getenv() - setOf("LSP_ANDROID_VARIANT", "KOTLIN_LSP_GRADLE_SOURCES", "ANDROID_SDK_ROOT")
-        return GradleRunner.create()
-            .withProjectDir(projectDir)
-            .withTestKitDir(testKitDir)
-            .withEnvironment(
-                baseEnvironment + mapOf(
-                    "ANDROID_HOME" to androidHome,
-                    "KOTLIN_LSP_ANDROID_OUTPUT" to outputDir.absolutePath,
-                ) + environment
-            )
-            .withArguments(listOf("-I", initScript.absolutePath, "lspLibrarySources") + arguments)
-            .build()
-    }
 
     private fun readJson(file: File): JsonObject = Json.parseToJsonElement(file.readText()).jsonObject
 
