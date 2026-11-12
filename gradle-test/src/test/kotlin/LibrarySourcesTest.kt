@@ -536,6 +536,17 @@ class LibrarySourcesTest {
     }
 
     @Test
+    fun writesGradleHomeOfBuild() {
+        val projectDir = copyFixture("jvm-only")
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir)
+
+        val gradleHome = File(outputDir, "library-sources/gradle-home.txt").readText()
+        assertTrue(File(gradleHome, "lib/gradle-tooling-api-$gradleVersion.jar").isFile, gradleHome)
+    }
+
+    @Test
     fun coversPluginBuildsOfRootBuild() {
         val projectDir = copyFixture("included")
         val outputDir = File(tempDir, "out")

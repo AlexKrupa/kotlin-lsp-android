@@ -25,9 +25,13 @@ import org.gradle.api.attributes.DocsType
 class LspFiles {
     // A reader never sees a partial file.
     static void writeAtomically(File target, Object content) {
+        writeTextAtomically(target, JsonOutput.prettyPrint(JsonOutput.toJson(content)))
+    }
+
+    static void writeTextAtomically(File target, String text) {
         target.parentFile.mkdirs()
         def temp = File.createTempFile(target.name, '.tmp', target.parentFile)
-        temp.setText(JsonOutput.prettyPrint(JsonOutput.toJson(content)), StandardCharsets.UTF_8.name())
+        temp.setText(text, StandardCharsets.UTF_8.name())
         Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 }
@@ -303,6 +307,9 @@ abstract class LspLibrarySourcesTask extends DefaultTask {
             libraries: libraries.collect { name, roots -> [name: name, type: 'COMPILE', roots: roots] },
         ])
         LspFiles.writeAtomically(new File(outputDir, 'variants.json'), [modules: modules, selected: selected])
+        if (gradleHome.present) {
+            LspFiles.writeTextAtomically(new File(librarySources, 'gradle-home.txt'), gradleHome.get())
+        }
         LspFiles.writeAtomically(new File(outputDir, 'missing-sources.json'), [
             androidPlatforms: missingPlatforms,
             gradleVersions  : missingGradleVersions,
