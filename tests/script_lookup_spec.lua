@@ -117,9 +117,25 @@ write_files(plugin_dir, plugin_files)
 local other_jar = work_dir .. '/other-sources.jar'
 write_jar(other_jar, { ['src/main/kotlin/com/example/Other.kt'] = { 'package com.example', '', 'class Other' } })
 
+-- As in Gradle: the Groovy blocks of `Project` take a `Closure`, and `getPlugins()` is in `PluginAware`.
+local project_lines = {
+  'package org.gradle.api;',
+  '',
+  'import groovy.lang.Closure;',
+  'import org.gradle.api.plugins.ExtensionAware;',
+  'import org.gradle.api.plugins.PluginAware;',
+  '',
+  'public interface Project extends Comparable<Project>, ExtensionAware, PluginAware {',
+  '    Project getRootProject();',
+  '',
+  '    void dependencies(Closure configureClosure);',
+  '}',
+}
 local gradle_api_jar = work_dir .. '/gradle-api-sources.jar'
 write_jar(gradle_api_jar, {
-  ['org/gradle/api/Project.java'] = { 'package org.gradle.api;', '', 'public interface Project extends Comparable<Project> {', '    Project getRootProject();', '}' },
+  ['org/gradle/api/Project.java'] = project_lines,
+  ['org/gradle/api/plugins/ExtensionAware.java'] = { 'package org.gradle.api.plugins;', '', 'public interface ExtensionAware {', '}' },
+  ['org/gradle/api/plugins/PluginAware.java'] = { 'package org.gradle.api.plugins;', '', 'public interface PluginAware {', '    PluginContainer getPlugins();', '}' },
   ['org/gradle/api/initialization/Settings.java'] = {
     'package org.gradle.api.initialization;',
     '',
@@ -128,6 +144,41 @@ write_jar(gradle_api_jar, {
     '}',
   },
   ['org/gradle/internal/Project.java'] = { 'package org.gradle.internal;', '', 'public class Project {', '}' },
+})
+
+-- The script template and the extensions of the Kotlin DSL, as in Gradle.
+local script_template_lines = {
+  'package org.gradle.kotlin.dsl',
+  '',
+  'import org.gradle.api.Project',
+  'import org.gradle.kotlin.dsl.support.DefaultKotlinScript',
+  '',
+  'abstract class KotlinProjectScriptTemplate(',
+  '    private val host: KotlinScriptHost<Project>',
+  ') : DefaultKotlinScript(defaultKotlinScriptHostForProject(host.target)) {',
+  '',
+  '    open fun buildscript(block: ScriptHandlerScope.() -> Unit): Unit =',
+  '        internalError()',
+  '',
+  '    fun plugins(@Suppress("unused_parameter") block: PluginDependenciesSpecScope.() -> Unit): Unit =',
+  '        invalidPluginsCall()',
+  '}',
+}
+local project_extensions_lines = {
+  'package org.gradle.kotlin.dsl',
+  '',
+  'import org.gradle.api.Project',
+  '',
+  'fun Project.dependencies(configuration: DependencyHandlerScope.() -> Unit) =',
+  '    DependencyHandlerScope.of(dependencies).configuration()',
+  '',
+  'fun Project.plugins(@Suppress("unused_parameter") block: PluginDependenciesSpec.() -> Unit): Nothing =',
+  '    invalidPluginsCall()',
+}
+local kotlin_dsl_jar = work_dir .. '/gradle-kotlin-dsl-sources.jar'
+write_jar(kotlin_dsl_jar, {
+  ['org/gradle/kotlin/dsl/KotlinProjectScriptTemplate.kt'] = script_template_lines,
+  ['org/gradle/kotlin/dsl/ProjectExtensions.kt'] = project_extensions_lines,
 })
 
 local kotlin_plugin_jar = work_dir .. '/kotlin-gradle-plugin-sources.jar'
@@ -140,7 +191,7 @@ write_jar(kotlin_plugin_jar, {
 })
 
 local missing_jar = work_dir .. '/missing-sources.jar'
-local source_path = { accessors_dir, dependency_accessors_dir, plugin_dir, other_jar, gradle_api_jar, kotlin_plugin_jar, missing_jar }
+local source_path = { accessors_dir, dependency_accessors_dir, plugin_dir, other_jar, gradle_api_jar, kotlin_dsl_jar, kotlin_plugin_jar, missing_jar }
 
 local script_lines = {
   'import com.example.ManagedDevice',
@@ -268,7 +319,7 @@ end
 -- The package index: a jar with a top folder, and a missing jar, which is skipped.
 assert_equal(sources.roots_with_package(source_path, 'com.example'), { plugin_dir, other_jar }, 'roots of com.example')
 assert_equal(sources.roots_with_package(source_path, 'org.gradle.api'), { gradle_api_jar }, 'roots of org.gradle.api')
-assert_equal(sources.roots_with_package(source_path, 'org.gradle.kotlin.dsl'), { accessors_dir }, 'roots of org.gradle.kotlin.dsl')
+assert_equal(sources.roots_with_package(source_path, 'org.gradle.kotlin.dsl'), { accessors_dir, kotlin_dsl_jar }, 'roots of org.gradle.kotlin.dsl')
 
 assert_location(lookup.definition(params_at('id("com.example.app")', 'app'), root_dir), folder_uri(plugin_dir, 'com/example/AppPlugin.kt'), 2, 'plugin id')
 
@@ -305,7 +356,12 @@ assert_location(lookup.definition(params_at('ManagedDevice? = null', 'ManagedDev
 assert_location(lookup.definition(params_at('val file: File', 'File'), root_dir), folder_uri(plugin_dir, 'java/io/File.java'), 2, 'implicit import of a class')
 
 -- `to_sources` calls the lookup for an empty server result.
-assert_location(sources.to_sources({}, params_at('val root: Project', 'Project'), root_dir), jar_uri(gradle_api_jar, 'org/gradle/api/Project.java'), 2, 'implicit import')
+assert_location(
+  sources.to_sources({}, params_at('val root: Project', 'Project'), root_dir),
+  jar_uri(gradle_api_jar, 'org/gradle/api/Project.java'),
+  line_index_of(project_lines, 'public interface Project'),
+  'implicit import'
+)
 
 assert_location(
   lookup.definition(params_at('implementation(libs.androidx', 'implementation'), root_dir),
@@ -328,6 +384,27 @@ assert_equal(
   lookup.enclosing_blocks({ '/* { */ tasks.register("a{") {', "  val c = '{'", '  val r = """}${x}"""', '  if (c) {', '    x', '  }', '  y' }, { line = 6, character = 2 }),
   { 'register' },
   'blocks after a call, a char, a raw string, and an if'
+)
+
+assert_equal(
+  lookup.enclosing_blocks({ 'android {', '  tasks.withType<Test> {', '  }', '  tasks.register<Copy>("x") {', '    group = "a"' }, { line = 4, character = 4 }),
+  { 'android', 'register' },
+  'blocks after type arguments'
+)
+
+-- At the top level, the members of the script template come before the members of `Project`. A
+-- Kotlin lambda is not a Groovy `Closure`.
+assert_location(
+  lookup.definition(params_at('plugins {', 'plugins'), root_dir),
+  jar_uri(kotlin_dsl_jar, 'org/gradle/kotlin/dsl/KotlinProjectScriptTemplate.kt'),
+  line_index_of(script_template_lines, 'fun plugins'),
+  'plugins at the top level'
+)
+assert_location(
+  lookup.definition(params_at('dependencies {', 'dependencies'), root_dir),
+  jar_uri(kotlin_dsl_jar, 'org/gradle/kotlin/dsl/ProjectExtensions.kt'),
+  line_index_of(project_extensions_lines, 'fun Project.dependencies'),
+  'dependencies at the top level'
 )
 
 assert_location(

@@ -178,16 +178,36 @@ local max_declaration_line_count = 20
 -- A brace after one of these words does not change the receiver.
 local control_flow_keywords = { ['if'] = true, ['else'] = true, ['when'] = true, ['for'] = true, ['while'] = true, ['do'] = true, ['try'] = true, ['catch'] = true, ['finally'] = true }
 
----@return string? identifier before the `{` at `brace_index`, also before `(...)`
+---@param close_index integer index of the `close` character
+---@param allowed string? pattern of the characters that can be in the pair
+---@return integer? index before the `open` character of the pair
+local function before_pair(text, close_index, open, close, allowed)
+  local index = close_index
+  local depth = 0
+  repeat
+    local char = text:sub(index, index)
+    if allowed and not char:match(allowed) then
+      return nil
+    end
+    depth = depth + (char == close and 1 or char == open and -1 or 0)
+    index = index - 1
+  until depth == 0 or index == 0
+  return index
+end
+
+---@return string? identifier before the `{` at `brace_index`, also before `(...)` and `<...>`, as in
+---`register<Copy>("x") {`
 local function block_name(text, brace_index)
   local index = #text:sub(1, brace_index - 1):gsub('%s+$', '')
   if text:sub(index, index) == ')' then
-    local depth = 0
-    repeat
-      local char = text:sub(index, index)
-      depth = depth + (char == ')' and 1 or char == '(' and -1 or 0)
-      index = index - 1
-    until depth == 0 or index == 0
+    index = #text:sub(1, before_pair(text, index, '(', ')')):gsub('%s+$', '')
+  end
+  if text:sub(index, index) == '>' then
+    -- The characters of type arguments, so that `x -> {` has no name.
+    index = before_pair(text, index, '<', '>', '[%w_.,%s<>?*]')
+    if not index then
+      return nil
+    end
   end
   local name = text:sub(1, index):match('([%w_]+)%s*$')
   if name and not control_flow_keywords[name] then
@@ -348,8 +368,9 @@ local function find_in_hierarchy(declared_type, source_path, find)
 end
 
 ---@param declared_type script_lookup.Type
+---@param type_lines string[] lines of the source file of the type
 ---@return script_lookup.Match[] declarations of the name in the source file of the type
-local function find_members(declared_type, name)
+local function find_members(declared_type, type_lines, name)
   local matches = sources.search_declarations({ declared_type.path }, name, false)
   if #matches == 0 and vim.endswith(declared_type.path, '.java') then
     -- Kotlin uses a Java getter as a property.
@@ -357,8 +378,11 @@ local function find_members(declared_type, name)
   end
   local members = {}
   for _, match in ipairs(matches) do
-    -- The type declaration has the name of the type.
-    if match.line_index ~= declared_type.line_index then
+    local is_type_declaration = match.line_index == declared_type.line_index
+    -- Kotlin cannot pass a lambda as a Groovy `Closure`. It calls a Kotlin DSL extension, for example
+    -- `Project.dependencies`, which step 3 or step 5 finds.
+    local takes_closure = type_lines[match.line_index + 1]:find('%(.*%f[%w_]Closure%f[^%w_]') ~= nil
+    if not is_type_declaration and not takes_closure then
       table.insert(members, vim.tbl_extend('force', match, { uri_for = declared_type.uri_for }))
     end
   end
@@ -404,7 +428,7 @@ local function block_type(receiver, name, source_path)
   local receiver_names = {}
   local found = find_in_hierarchy(receiver, source_path, function(declared_type, type_lines)
     receiver_names[declared_type.name] = true
-    for _, member in ipairs(find_members(declared_type, name)) do
+    for _, member in ipairs(find_members(declared_type, type_lines, name)) do
       local type_name = block_type_name(type_lines[member.line_index + 1], name)
       local member_type = type_name and resolve_in_file(type_name, type_lines, source_path)
       if member_type then
@@ -416,32 +440,52 @@ local function block_type(receiver, name, source_path)
   return found or find_extension_block_type(receiver_names, name, source_path)
 end
 
--- `settings.gradle.kts` and `<name>.settings.gradle.kts` are settings scripts. The same applies to
--- init scripts.
-local first_receivers = { ['settings.gradle.kts'] = 'org.gradle.api.initialization.Settings', ['init.gradle.kts'] = 'org.gradle.api.invocation.Gradle' }
+-- At the top level, Kotlin uses the members of the script template, for example `plugins { }`, before
+-- the members of the implicit receiver. `settings.gradle.kts` and `<name>.settings.gradle.kts` are
+-- settings scripts. The same applies to init scripts.
+local first_receivers_by_suffix = {
+  ['settings.gradle.kts'] = { 'org.gradle.kotlin.dsl.KotlinSettingsScriptTemplate', 'org.gradle.api.initialization.Settings' },
+  ['init.gradle.kts'] = { 'org.gradle.kotlin.dsl.KotlinGradleScriptTemplate', 'org.gradle.api.invocation.Gradle' },
+}
+local project_first_receivers = { 'org.gradle.kotlin.dsl.KotlinProjectScriptTemplate', 'org.gradle.api.Project' }
 
----@return string full name of the receiver at the top level of the script
-local function first_receiver(script_path)
+---@return string[] full names of the receivers at the top level of the script, first receiver first
+local function first_receivers(script_path)
   local file_name = vim.fs.basename(script_path)
-  for suffix, type_name in pairs(first_receivers) do
+  for suffix, type_names in pairs(first_receivers_by_suffix) do
     if file_name == suffix or vim.endswith(file_name, '.' .. suffix) then
-      return type_name
+      return type_names
     end
   end
-  return 'org.gradle.api.Project'
+  return project_first_receivers
 end
 
 ---@param position lsp.Position
 ---@return lsp.Location[]?
 local function find_in_receiver(lines, position, symbol, model, script_path)
-  local receiver = resolve_named_type(first_receiver(script_path), model.source_path)
-  for _, name in ipairs(M.enclosing_blocks(lines, position)) do
-    receiver = receiver and block_type(receiver, name, model.source_path)
+  local receivers = {}
+  for _, full_name in ipairs(first_receivers(script_path)) do
+    local receiver = resolve_named_type(full_name, model.source_path)
+    if receiver then
+      table.insert(receivers, receiver)
+    end
   end
-  return receiver
-    and find_in_hierarchy(receiver, model.source_path, function(declared_type)
-      return to_locations(find_members(declared_type, symbol))
+  for _, name in ipairs(M.enclosing_blocks(lines, position)) do
+    local block_receiver
+    for _, receiver in ipairs(receivers) do
+      block_receiver = block_receiver or block_type(receiver, name, model.source_path)
+    end
+    receivers = { block_receiver }
+  end
+  for _, receiver in ipairs(receivers) do
+    local found = find_in_hierarchy(receiver, model.source_path, function(declared_type, type_lines)
+      return to_locations(find_members(declared_type, type_lines, symbol))
     end)
+    if found then
+      return found
+    end
+  end
+  return nil
 end
 
 -- Step 4: the implicit imports. Exact names first, then the `.*` packages. Only types: step 5
