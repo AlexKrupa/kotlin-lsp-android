@@ -6,67 +6,169 @@ local M = {}
 local sources = require 'kotlin_lsp_android.sources'
 local script_model = require 'kotlin_lsp_android.script_model'
 
----@alias script_lookup.Match { path: string, line_index: integer, character: integer, uri_for: fun(path: string): string }
+---@alias script_lookup.Match { path: string, line_index: integer, character: integer, uri_for: fun(path: string): string, source_root: string, package_name: string }
 
 ---@param matches script_lookup.Match[]
----@return lsp.Location[]?
+---@return lsp.Location[]? the first matches, up to the limit of the name lookup
 local function to_locations(matches)
   if #matches == 0 then
     return nil
   end
   return vim.tbl_map(function(match)
     return sources.to_location(match.uri_for, match)
-  end, matches)
+  end, vim.list_slice(matches, 1, sources.name_lookup_limit))
 end
 
----@return string? package name in the source file
-local function package_of(path)
-  for _, line in ipairs(vim.fn.readfile(path)) do
-    local package_name = line:match('^package%s+([%w_.]+)')
-    if package_name then
-      return package_name
+-- The lookup results do not change while the model stays the same. The extracted sources do not
+-- change, so the package index stays.
+local model_version
+---@type table<string, script_lookup.Match|false> declaration of a type by full name and source root
+local type_by_root = {}
+---@type table<string, script_lookup.Match[]> members by type declaration and name
+local members_by_type = {}
+
+local function forget_on_model_change()
+  if model_version ~= script_model.version() then
+    model_version = script_model.version()
+    type_by_root, members_by_type = {}, {}
+  end
+end
+
+-- A file can be outside the folder of its package, for example `KotlinDependencies.kt` at the root of
+-- the Kotlin Gradle plugin sources jar.
+---@type table<string, { path: string, directory: string }[]> files of each package in the indexed directories
+local files_by_package = {}
+---@type table<string, true>
+local indexed_directories = {}
+
+-- One `rg` for all new directories. `-m1` stops at the first package line of each file.
+---@param directories string[] directories with source files
+local function index_packages(directories)
+  local new_directories = {}
+  for _, directory in ipairs(directories) do
+    if not indexed_directories[directory] then
+      indexed_directories[directory] = true
+      new_directories[directory] = true
     end
   end
-  return nil
+  if vim.tbl_isempty(new_directories) then
+    return
+  end
+  local command = { 'rg', '-m1', '-o', '-r', '$1', '--no-heading', '--with-filename', '-g', '*.kt', '-g', '*.java', '-e', '^package\\s+([\\w.]+)' }
+  local output = vim.system(vim.list_extend(command, vim.tbl_keys(new_directories)), { text = true }):wait().stdout
+  ---@type table<string, string> directory of each folder
+  local directory_by_folder = {}
+  for line in vim.gsplit(output, '\n', { trimempty = true }) do
+    local path, package_name = line:match('^(.*):([%w_.]+)$')
+    local folder = vim.fs.dirname(path)
+    local directory = directory_by_folder[folder] or folder
+    while not new_directories[directory] and vim.fs.dirname(directory) ~= directory do
+      directory = vim.fs.dirname(directory)
+    end
+    directory_by_folder[folder] = directory
+    files_by_package[package_name] = files_by_package[package_name] or {}
+    table.insert(files_by_package[package_name], { path = path, directory = directory })
+  end
 end
 
--- One search for each source root with one of the packages, not for each package: a script has
--- about 200 implicit imports.
+-- One search over the files of the packages in all source roots, not one for each root: Gradle
+-- splits `org.gradle.api` over 76 folders.
 ---@param package_names string[]
----@return script_lookup.Match[]
+---@return script_lookup.Match[] in the order of the source roots, then by path and position
 local function search_packages(source_path, package_names, symbol, types_only)
-  local wanted_packages = {}
-  local source_roots = {}
+  ---@type table<string, { index: integer, source_root: string, uri_for: fun(path: string): string }>
+  local roots_by_directory = {}
+  local directories = {}
   for _, package_name in ipairs(package_names) do
-    wanted_packages[package_name] = true
     for _, source_root in ipairs(sources.roots_with_package(source_path, package_name)) do
-      if not vim.list_contains(source_roots, source_root) then
-        table.insert(source_roots, source_root)
+      -- A sources jar that cannot be extracted has no files.
+      local is_open, directory, uri_for = pcall(sources.open_sources, source_root)
+      if is_open and not roots_by_directory[directory] then
+        table.insert(directories, directory)
+        roots_by_directory[directory] = { index = #directories, source_root = source_root, uri_for = uri_for }
       end
     end
   end
-  local found = {}
-  for _, source_root in ipairs(source_roots) do
-    local directory, uri_for = sources.open_sources(source_root)
-    for _, match in ipairs(sources.search_declarations({ directory }, symbol, types_only)) do
-      if #found < sources.name_lookup_limit and wanted_packages[package_of(match.path)] then
-        table.insert(found, vim.tbl_extend('force', match, { uri_for = uri_for }))
+  index_packages(directories)
+  ---@type table<string, { directory: string, package_name: string }>
+  local file_by_path = {}
+  local paths = {}
+  for _, package_name in ipairs(package_names) do
+    for _, file in ipairs(files_by_package[package_name] or {}) do
+      if roots_by_directory[file.directory] and not file_by_path[file.path] then
+        file_by_path[file.path] = { directory = file.directory, package_name = package_name }
+        table.insert(paths, file.path)
       end
     end
   end
+  if #paths == 0 then
+    return {}
+  end
+  local found = vim.tbl_map(function(match)
+    local file = file_by_path[match.path]
+    local root = roots_by_directory[file.directory]
+    return vim.tbl_extend('force', match, { uri_for = root.uri_for, source_root = root.source_root, package_name = file.package_name, root_index = root.index })
+  end, sources.search_declarations(paths, symbol, types_only))
+  table.sort(found, function(first, second)
+    if first.root_index ~= second.root_index then
+      return first.root_index < second.root_index
+    end
+    if first.path ~= second.path then
+      return first.path < second.path
+    end
+    if first.line_index ~= second.line_index then
+      return first.line_index < second.line_index
+    end
+    return first.character < second.character
+  end)
   return found
 end
 
 -- A package name starts with a lowercase letter, and a class name with an uppercase letter.
----@param full_name string for example `com.example.Outer.Inner`
+---@return string?
+local function package_of_type(full_name)
+  return full_name:match('^(.-)%.%u') or full_name:match('^(.*)%.')
+end
+
+-- The first full name with a declaration wins. One search finds all full names that are not known.
+---@param full_names string[] names with the same simple name, for example `com.example.Outer.Inner`
 ---@param source_path string[]
 ---@return script_lookup.Match? type declaration
-function M.resolve_type(full_name, source_path)
-  local package_name = full_name:match('^(.-)%.%u') or full_name:match('^(.*)%.')
-  if not package_name then
-    return nil
+local function resolve_type(full_names, source_path)
+  local candidates = {}
+  local is_known = true
+  for _, full_name in ipairs(full_names) do
+    local package_name = package_of_type(full_name)
+    if package_name then
+      local source_roots = sources.roots_with_package(source_path, package_name)
+      table.insert(candidates, { full_name = full_name, package_name = package_name, source_roots = source_roots })
+      for _, source_root in ipairs(source_roots) do
+        is_known = is_known and type_by_root[full_name .. '\n' .. source_root] ~= nil
+      end
+    end
   end
-  return search_packages(source_path, { package_name }, full_name:match('[%w_]+$'), true)[1]
+  if not is_known then
+    local package_names = vim.tbl_map(function(candidate)
+      return candidate.package_name
+    end, candidates)
+    local matches = search_packages(source_path, package_names, candidates[1].full_name:match('[%w_]+$'), true)
+    for _, candidate in ipairs(candidates) do
+      for _, source_root in ipairs(candidate.source_roots) do
+        type_by_root[candidate.full_name .. '\n' .. source_root] = vim.iter(matches):find(function(match)
+          return match.source_root == source_root and match.package_name == candidate.package_name
+        end) or false
+      end
+    end
+  end
+  for _, candidate in ipairs(candidates) do
+    for _, source_root in ipairs(candidate.source_roots) do
+      local found = type_by_root[candidate.full_name .. '\n' .. source_root]
+      if found then
+        return found
+      end
+    end
+  end
+  return nil
 end
 
 -- Step 0: the string argument of `id("...")` or `kotlin("...")`.
@@ -81,7 +183,7 @@ local function find_plugin(lines, line, column, model, params, root_dir)
         if not class_name then
           return nil
         end
-        local found = M.resolve_type(class_name, model.source_path)
+        local found = resolve_type({ class_name }, model.source_path)
         if found then
           return { sources.to_location(found.uri_for, found) }
         end
@@ -275,10 +377,11 @@ function M.enclosing_blocks(lines, position)
   return names
 end
 
+---@param full_names string[] names with the same simple name
 ---@return script_lookup.Type?
-local function resolve_named_type(full_name, source_path)
-  local found = M.resolve_type(full_name, source_path)
-  return found and vim.tbl_extend('force', found, { name = full_name:match('[%w_]+$') })
+local function resolve_named_type(full_names, source_path)
+  local found = resolve_type(full_names, source_path)
+  return found and vim.tbl_extend('force', found, { name = full_names[1]:match('[%w_]+$') })
 end
 
 ---@param type_name string simple name, nested name (`Outer.Inner`), or full name
@@ -286,27 +389,21 @@ end
 ---@return script_lookup.Type?
 local function resolve_in_file(type_name, file_lines, source_path)
   if type_name:match('^%l[%w_]*%.') then
-    return resolve_named_type(type_name, source_path)
+    return resolve_named_type({ type_name }, source_path)
   end
   local first_name = type_name:match('^[%w_]+')
   local full_names = {}
   for _, line in ipairs(file_lines) do
     local imported = line:match('^import%s+([%w_.]+)%.' .. first_name .. '%s*;?%s*$')
     if imported then
-      return resolve_named_type(imported .. '.' .. type_name, source_path)
+      return resolve_named_type({ imported .. '.' .. type_name }, source_path)
     end
     local package_name = line:match('^package%s+([%w_.]+)') or line:match('^import%s+([%w_.]+)%.%*')
     if package_name then
       table.insert(full_names, package_name .. '.' .. type_name)
     end
   end
-  for _, full_name in ipairs(full_names) do
-    local found = resolve_named_type(full_name, source_path)
-    if found then
-      return found
-    end
-  end
-  return nil
+  return resolve_named_type(full_names, source_path)
 end
 
 -- Kotlin `: A, B<...>`, or Java `extends A implements B<...>`.
@@ -371,6 +468,10 @@ end
 ---@param type_lines string[] lines of the source file of the type
 ---@return script_lookup.Match[] declarations of the name in the source file of the type
 local function find_members(declared_type, type_lines, name)
+  local key = ('%s:%d\n%s'):format(declared_type.path, declared_type.line_index, name)
+  if members_by_type[key] then
+    return members_by_type[key]
+  end
   local matches = sources.search_declarations({ declared_type.path }, name, false)
   if #matches == 0 and vim.endswith(declared_type.path, '.java') then
     -- Kotlin uses a Java getter as a property.
@@ -386,6 +487,7 @@ local function find_members(declared_type, type_lines, name)
       table.insert(members, vim.tbl_extend('force', match, { uri_for = declared_type.uri_for }))
     end
   end
+  members_by_type[key] = members
   return members
 end
 
@@ -467,7 +569,7 @@ end
 local function find_in_receiver(lines, position, symbol, model, script_path)
   local receivers = {}
   for _, full_name in ipairs(first_receivers(script_path)) do
-    local receiver = resolve_named_type(full_name, model.source_path)
+    local receiver = resolve_named_type({ full_name }, model.source_path)
     if receiver then
       table.insert(receivers, receiver)
     end
@@ -508,7 +610,7 @@ local function find_implicitly_imported(symbol, model)
     if star_package then
       table.insert(star_packages, star_package)
     elseif implicit_import:match('[%w_]+$') == symbol then
-      local found = M.resolve_type(implicit_import, model.source_path)
+      local found = resolve_type({ implicit_import }, model.source_path)
       if found then
         return { sources.to_location(found.uri_for, found) }
       end
@@ -551,6 +653,7 @@ end
 function M.definition(params, root_dir, script_lines)
   local symbol = sources.find_symbol(params, script_lines)
   local model = script_model.get(root_dir, vim.uri_to_fname(params.textDocument.uri))
+  forget_on_model_change()
   local lines = script_lines or vim.api.nvim_buf_get_lines(vim.uri_to_bufnr(params.textDocument.uri), 0, -1, false)
   if not model then
     -- Step 6 for a script with no entry, for example a new file.

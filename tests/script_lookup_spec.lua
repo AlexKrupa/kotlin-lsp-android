@@ -86,7 +86,20 @@ local catalog_accessor = {
   '    }',
   '}',
 }
+-- The accessors of another catalog have more getters of the name than the name lookup lists.
+local other_catalog_accessor = { 'package org.gradle.accessors.dm;', '', 'public class LibrariesForAnother extends AbstractExternalDependencyFactory {' }
+for index = 1, 30 do
+  vim.list_extend(other_catalog_accessor, {
+    ('    public static class Accessors%d {'):format(index),
+    '        public Provider<MinimalExternalModuleDependency> getFoo() {',
+    '            return create("foo");',
+    '        }',
+    '    }',
+  })
+end
+table.insert(other_catalog_accessor, '}')
 write_files(dependency_accessors_dir, {
+  ['org/gradle/accessors/dm/LibrariesForAnother.java'] = other_catalog_accessor,
   ['org/gradle/accessors/dm/LibrariesForLibs.java'] = catalog_accessor,
   ['org/gradle/accessors/dm/LibrariesForLibsInPluginsBlock.java'] = catalog_accessor,
 })
@@ -207,6 +220,7 @@ write_jar(kotlin_dsl_jar, {
   ['org/gradle/kotlin/dsl/ProjectExtensions.kt'] = project_extensions_lines,
 })
 
+-- Like the Kotlin Gradle plugin sources jar, a file can be outside the folder of its package.
 local kotlin_plugin_jar = work_dir .. '/kotlin-gradle-plugin-sources.jar'
 write_jar(kotlin_plugin_jar, {
   ['org/jetbrains/kotlin/gradle/plugin/KotlinAndroidPluginWrapper.kt'] = {
@@ -214,6 +228,7 @@ write_jar(kotlin_plugin_jar, {
     '',
     'open class KotlinAndroidPluginWrapper : AbstractKotlinAndroidPluginWrapper()',
   },
+  ['KotlinPluginWrapper.kt'] = { 'package org.jetbrains.kotlin.gradle.plugin', '', 'open class KotlinPluginWrapper : AbstractKotlinPluginWrapper()' },
 })
 
 local missing_jar = work_dir .. '/missing-sources.jar'
@@ -227,6 +242,7 @@ local script_lines = {
   'plugins {',
   '    id("com.example.app")',
   '    kotlin("android")',
+  '    kotlin("jvm")',
   '    alias(libs.plugins.ksp)',
   '    id("com.example.convention")',
   '}',
@@ -312,6 +328,7 @@ vim.fn.writefile({
           ['com.example.app'] = 'com.example.AppPlugin',
           ['com.example.convention'] = 'ConventionPlugin',
           ['org.jetbrains.kotlin.android'] = 'org.jetbrains.kotlin.gradle.plugin.KotlinAndroidPluginWrapper',
+          ['org.jetbrains.kotlin.jvm'] = 'org.jetbrains.kotlin.gradle.plugin.KotlinPluginWrapper',
         },
       },
     }),
@@ -381,6 +398,7 @@ assert_location(
   2,
   'Kotlin plugin id'
 )
+assert_location(lookup.definition(params_at('kotlin("jvm")', 'jvm'), root_dir), jar_uri(kotlin_plugin_jar, 'KotlinPluginWrapper.kt'), 2, 'class in a file outside its package folder')
 
 assert_location(
   lookup.definition(params_at('libs.androidx.core.ktx', 'ktx'), root_dir),

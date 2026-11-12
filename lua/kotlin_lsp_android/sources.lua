@@ -170,10 +170,14 @@ local function search_declarations(paths, symbol, types_only)
   -- example `android` in `val com.android.Foo.bar`.
   local declaration = type_declaration .. '|\\b(fun|val|var)\\s+(<[^>]*>\\s*)?([\\w.<>?, ]+\\.)?`?' .. symbol .. '\\b([^.]|$)'
   local matches = search(types_only and type_declaration or declaration, paths)
-  if #matches == 0 and not types_only then
+  -- `rg` searches each file in `paths`, also a file that the glob excludes.
+  local java_paths = vim.tbl_filter(function(path)
+    return not vim.endswith(path, '.kt')
+  end, paths)
+  if #matches == 0 and not types_only and #java_paths > 0 then
     -- A Java member has a type before its name. A call in a method body can match too, so this
     -- search runs only when no other declaration matches.
-    matches = search('^\\s*[\\w@<>\\[\\],.? ]+\\s' .. symbol .. '\\s*[(=;]', paths, { '*.java' })
+    matches = search('^\\s*[\\w@<>\\[\\],.? ]+\\s' .. symbol .. '\\s*[(=;]', java_paths, { '*.java' })
   end
   return matches
 end

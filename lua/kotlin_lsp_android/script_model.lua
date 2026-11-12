@@ -13,6 +13,8 @@ local pending_roots = {}
 local warned_roots = {}
 ---@type table<string, { mtime: { sec: integer, nsec: integer }, model: table }>
 local model_by_path = {}
+-- It changes when a model file is read again, for example after an import.
+local version = 0
 
 ---@param executable_path string
 function M.setup(executable_path)
@@ -69,7 +71,13 @@ local function read_model(root_dir)
     return nil
   end
   model_by_path[path] = { mtime = stat.mtime, model = model }
+  version = version + 1
   return model
+end
+
+---@return integer version of the models, so that a cache of lookups in the model can be cleared
+function M.version()
+  return version
 end
 
 ---@param root_dir string
