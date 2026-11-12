@@ -1,5 +1,6 @@
 // Command kotlin-lsp-android connects an LSP client to one shared kotlin-lsp server per Gradle
-// root. It ignores arguments such as --stdio, except the subcommands variant and download.
+// root. It ignores arguments such as --stdio, except the subcommands variant, download, and
+// script-model.
 package main
 
 import (
@@ -14,6 +15,7 @@ import (
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/lsp"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/proxy"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/scriptmodel"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/server"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/sources"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/variant"
@@ -44,6 +46,13 @@ func run() error {
 			return err
 		}
 		return runVariant(rootPath, root.CacheDir(rootPath), os.Args[2:])
+	}
+	if len(os.Args) == 2 && os.Args[1] == "script-model" {
+		rootPath, err := findRoot()
+		if err != nil {
+			return err
+		}
+		return scriptmodel.Run(rootPath, root.CacheDir(rootPath))
 	}
 	conn, projects, err := startServer()
 	if err != nil {
