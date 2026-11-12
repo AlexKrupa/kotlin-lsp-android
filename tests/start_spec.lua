@@ -1,0 +1,82 @@
+-- Run from the repo root: nvim --clean --headless -l tests/start_spec.lua
+local repo_root = vim.fs.dirname(vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p')))
+vim.opt.runtimepath:prepend(repo_root)
+package.path = repo_root .. '/lua/?.lua;' .. repo_root .. '/lua/?/init.lua;' .. package.path
+
+local work_dir = vim.fn.resolve(vim.fn.tempname())
+local project_dir = work_dir .. '/project'
+vim.fn.mkdir(project_dir, 'p')
+
+local messages = {}
+vim.notify = function(message)
+  table.insert(messages, message)
+end
+
+-- The progress of the start, without the indexing progress of the fake server.
+local start_kinds = {}
+vim.api.nvim_create_autocmd('LspProgress', {
+  callback = function(event)
+    if event.data.params.token ~= 'indexing' then
+      table.insert(start_kinds, event.data.params.value.kind)
+    end
+  end,
+})
+
+---@param lines string[]
+local function write_executable(lines)
+  local executable = work_dir .. '/kotlin-lsp'
+  vim.fn.writefile(lines, executable)
+  vim.fn.setfperm(executable, 'rwx------')
+  return executable
+end
+
+local plugin = require 'kotlin_lsp_android'
+
+local project_file = project_dir .. '/A.kt'
+vim.fn.writefile({ 'class A' }, project_file)
+vim.cmd.edit(vim.fn.fnameescape(project_file))
+
+-- The start progress ends before `on_init`.
+plugin.setup({ executable = write_executable({
+  '#!/bin/sh',
+  ('exec nvim --clean --headless -l %s/tests/fake_kotlin_lsp.lua'):format(repo_root),
+}) })
+local kinds_at_init
+local client_id = assert(vim.lsp.start({
+  name = 'kotlin_lsp',
+  cmd = plugin.cmd,
+  root_dir = project_dir,
+  on_init = function()
+    kinds_at_init = vim.deepcopy(start_kinds)
+  end,
+}))
+assert(vim.wait(5000, function()
+  return kinds_at_init ~= nil
+end), 'the client did not initialize')
+assert(vim.deep_equal(kinds_at_init, { 'begin', 'end' }), ('start progress at on_init = %s, want begin, end'):format(vim.inspect(kinds_at_init)))
+assert(vim.lsp.get_client_by_id(client_id)):stop()
+assert(vim.wait(5000, function()
+  return vim.lsp.get_client_by_id(client_id) == nil
+end), 'the client did not stop')
+
+-- If the proxy exits before `initialize`, the progress ends and Neovim shows the error of the proxy.
+start_kinds = {}
+messages = {}
+local body = vim.json.encode({ jsonrpc = '2.0', method = 'window/showMessage', params = { type = 1, message = 'no Gradle root' } })
+local message_file = work_dir .. '/message'
+local file = assert(io.open(message_file, 'wb'))
+file:write(('Content-Length: %d\r\n\r\n%s'):format(#body, body))
+file:close()
+plugin.setup({ executable = write_executable({ '#!/bin/sh', ('cat %s'):format(message_file), 'exit 1' }) })
+client_id = assert(vim.lsp.start({ name = 'kotlin_lsp', cmd = plugin.cmd, root_dir = project_dir }))
+assert(vim.wait(5000, function()
+  return vim.lsp.get_client_by_id(client_id) == nil
+end), 'the client did not exit')
+vim.wait(100)
+assert(vim.deep_equal(start_kinds, { 'begin', 'end' }), ('start progress = %s, want begin, end'):format(vim.inspect(start_kinds)))
+assert(vim.iter(messages):any(function(message)
+  return message:find('no Gradle root', 1, true) ~= nil
+end), ('messages = %s, want the error of the proxy'):format(vim.inspect(messages)))
+
+vim.fn.delete(work_dir, 'rf')
+print 'start_spec: ok'

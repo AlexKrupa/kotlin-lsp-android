@@ -60,6 +60,11 @@ the same executable. `root_dir` finds the Gradle
 root of a buffer. For a library file (a `jar:` buffer, or an Android SDK or Gradle source file), it
 uses the root of the last Kotlin buffer.
 
+On the first start of a root, the binary runs Gradle before the server starts. `cmd` shows the
+progress "Starting kotlin-lsp" (`$/progress`) until the response to `initialize`. If the binary
+cannot start the server, it sends the error as `window/showMessage` and exits. Neovim shows the
+error with `vim.notify`.
+
 `cmd` also has workarounds for library locations. They use only the sources in `workspace.json`:
 
 - Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for
@@ -164,5 +169,6 @@ Lua tests, with no user config:
 nvim --clean --headless -l tests/jar_spec.lua
 nvim --clean --headless -l tests/retry_spec.lua
 nvim --clean --headless -l tests/sources_spec.lua
+nvim --clean --headless -l tests/start_spec.lua
 nvim --clean --headless -l tests/variant_spec.lua
 ```

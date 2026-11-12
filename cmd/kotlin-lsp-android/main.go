@@ -5,11 +5,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 
 	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/download"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/lsp"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/proxy"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/server"
@@ -36,21 +38,41 @@ func run() error {
 	if len(os.Args) == 3 && os.Args[1] == "download" {
 		return download.Run(os.Args[2])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "variant" {
+		rootPath, err := findRoot()
+		if err != nil {
+			return err
+		}
+		return runVariant(rootPath, root.CacheDir(rootPath), os.Args[2:])
+	}
+	conn, projects, err := startServer()
+	if err != nil {
+		// Without this message, an LSP client shows only the exit code.
+		if writeErr := lsp.WriteErrorMessage(os.Stdout, fmt.Sprintf("kotlin-lsp-android: %v", err)); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "kotlin-lsp-android: %v\n", writeErr)
+		}
+		return err
+	}
+	return proxy.Run(os.Stdin, os.Stdout, conn, projects)
+}
+
+func findRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
+		return "", fmt.Errorf("get working directory: %w", err)
 	}
-	rootPath, err := root.Find(dir)
+	return root.Find(dir)
+}
+
+func startServer() (net.Conn, []lsp.Project, error) {
+	rootPath, err := findRoot()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	cacheDir := root.CacheDir(rootPath)
-	if len(os.Args) > 1 && os.Args[1] == "variant" {
-		return runVariant(rootPath, cacheDir, os.Args[2:])
-	}
 	scriptPath, err := initscript.Write(cacheDir)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	env := server.Env(cacheDir, scriptPath)
 	prepare := func() {
@@ -64,12 +86,12 @@ func run() error {
 	}
 	conn, err := server.Ensure(rootPath, cacheDir, env, prepare)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if err := download.Start(cacheDir); err != nil {
 		fmt.Fprintf(os.Stderr, "kotlin-lsp-android: download sources: %v\n", err)
 	}
-	return proxy.Run(os.Stdin, os.Stdout, conn, sources.Projects(rootPath, cacheDir))
+	return conn, sources.Projects(rootPath, cacheDir), nil
 }
 
 func runVariant(rootPath, cacheDir string, args []string) error {

@@ -73,6 +73,9 @@ local restart_window_ms = 10 * 60 * 1000
 ---@type table<string, integer[]> restart times of each root, in milliseconds
 local restart_times_by_root = {}
 
+-- On the first start of a root, the proxy runs Gradle before the server answers `initialize`.
+local start_progress_token = 'kotlin_lsp_android/start'
+
 ---@param dispatchers vim.lsp.rpc.Dispatchers
 ---@param config vim.lsp.ClientConfig
 function M.cmd(dispatchers, config)
@@ -110,10 +113,32 @@ function M.cmd(dispatchers, config)
       end
     end)
   end
+  local is_starting = true
+  ---@param value lsp.WorkDoneProgressBegin|lsp.WorkDoneProgressEnd
+  local function report_start(value)
+    dispatchers.notification('$/progress', { token = start_progress_token, value = value })
+  end
+  local function end_start()
+    if is_starting then
+      is_starting = false
+      report_start({ kind = 'end' })
+    end
+  end
+  -- The `$/progress` handler needs the client, which Neovim registers after `cmd` returns.
+  vim.schedule(function()
+    if is_starting then
+      report_start({ kind = 'begin', title = 'Starting kotlin-lsp' })
+    end
+  end)
+  local function on_exit_after_start(code, signal)
+    -- Neovim removes the client two event loop cycles after the exit.
+    vim.schedule(end_start)
+    start_again(code, signal)
+  end
   local indexing = require('kotlin_lsp_android.indexing').new()
   rpc = vim.lsp.rpc.start(
     { executable, '--stdio' },
-    vim.tbl_extend('force', dispatchers, { on_exit = start_again, notification = indexing.observe(dispatchers.notification) }),
+    vim.tbl_extend('force', dispatchers, { on_exit = on_exit_after_start, notification = indexing.observe(dispatchers.notification) }),
     { cwd = config.root_dir }
   )
   -- The change is in the RPC client, not in a handler, so that each consumer of locations, for
@@ -131,6 +156,12 @@ function M.cmd(dispatchers, config)
     end, notify_reply_callback)
   end
   rpc.request = function(method, params, callback, notify_reply_callback)
+    if method == 'initialize' then
+      return request(method, params, function(err, result)
+        end_start()
+        callback(err, result)
+      end, notify_reply_callback)
+    end
     if not location_methods[method] then
       return request(method, params, callback, notify_reply_callback)
     end
