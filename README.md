@@ -1,14 +1,16 @@
 # kotlin-lsp-android
 
 `kotlin-lsp-android` helps Kotlin and Android projects in Neovim. A jump from project code into an
-Android library, the Android SDK, or the Gradle API opens the source file, not a `.class` stub. The
-user can select the Android build variant.
+Android library, the Android SDK, or the Gradle API opens the source file, not a `.class` stub. Go
+to definition, hover, and references also work in `.gradle.kts` files. The user can select the
+Android build variant.
 
 The repo has two parts:
 
 - A Go binary. It sits between an LSP client and one shared `kotlin-lsp` server for each Gradle
   root.
-- A small Neovim plugin. It opens `jar:` buffers and adds the command `:AndroidVariant`.
+- A small Neovim plugin. It opens `jar:` buffers, looks up names in `.gradle.kts` files, and adds
+  the command `:AndroidVariant`.
 
 The binary is installed on PATH as `kotlin-lsp`. Neovim, Claude Code, and other LSP clients start
 it with no change.
@@ -22,6 +24,7 @@ it with no change.
 - Neovim 0.11 or later, with `zip`, `unzip`, and `rg` on PATH.
 - Go, to build the binary.
 - The `android` CLI on PATH, for the background download of the Android SDK sources.
+- `java` 17 or later on PATH, for the model of the `.gradle.kts` files.
 
 ## Install
 
@@ -118,6 +121,56 @@ message first. When the server stops, each proxy exits with code 3. Then `cmd` s
 restarts of a root in 10 minutes, `cmd` does not start the client again, and Neovim shows a warning
 for exit code 3. If the server crashes at each start, this limit stops a loop of Gradle imports.
 
+## Gradle scripts
+
+kotlin-lsp does not analyze `.gradle.kts` files (kotlin-lsp issue #55). For these files, `cmd`
+answers these requests with a name lookup in the plugin:
+
+- Go to definition, declaration, implementation, and type definition.
+- Hover. `cmd` sends the request to the server first. If the result is empty, it shows the
+  declaration with its KDoc or Javadoc.
+- References. From a `.gradle.kts` file, `cmd` returns the uses in the `.gradle.kts` files of the
+  root. From a `.kt` file or a library file, it adds these uses to the server result. Above 200
+  matches of the name, it returns only the server result and shows a message.
+
+The lookup does not resolve types like a compiler. It uses the script model and the receiver types
+of the blocks around the cursor. The first step with a result gives the result:
+
+| Name at the cursor | Example | Result |
+| --- | --- | --- |
+| Plugin id, cursor in the string | `id("com.android.application")`, `kotlin("android")` | The plugin class. `workspace/symbol` finds a class of `build-logic`. |
+| Version catalog | `libs.androidx.core.ktx`, `alias(libs.plugins.ksp)` | The key in `gradle/libs.versions.toml` |
+| Import | `import com.android.build.api.dsl.ManagedVirtualDevice` | The imported declaration |
+| Name in a block | `compileSdk` in `android { defaultConfig { } }` | A member of the block receiver, then of the outer block receivers, also in the supertypes |
+| Implicit import | `Project`, `JavaVersion` | The type |
+| Accessor or Kotlin DSL | `android`, `implementation(...)` | The generated accessors and the Kotlin DSL API |
+| Other names | | The plain name lookup: up to 30 declarations, then `workspace/symbol` |
+
+The lookup extracts only the sources jars that have the package of the name, to the Neovim cache
+folder.
+
+### Script model
+
+The script model comes from the Gradle Tooling API model `KotlinDslScriptsModel`. IntelliJ uses the
+same model. For each script, it has the source path, the implicit imports, and the plugin classes of
+the plugin ids. The source path includes the sources of the generated accessors.
+
+`kotlin-lsp script-model` writes the model of the project in the current directory to
+`library-sources/gradle-scripts.json`. It runs a Java client with the jars of the Gradle
+distribution of the build. Thus it needs `java` on PATH and no download. The import writes the path
+of the distribution to `library-sources/gradle-home.txt`. Without this file, the command fails. With
+a running Gradle daemon, a run takes about 1 s.
+
+The plugin runs `script-model` in the background:
+
+- When the work done progress (`$/progress`) of the client ends, for example after an import
+- If `gradle-scripts.json` is missing: on a request from a `.gradle.kts` file
+
+Until the run ends, the lookup uses the current model file. If there is no model, the lookup uses
+the plain name lookup. The same applies to a script with no entry in the model, for example a new
+file. If a run fails, for example because `java` is missing, Neovim shows one warning for each root,
+with the end of the error output.
+
 ## Files
 
 The cache root is `$KOTLIN_LSP_CACHE`. The default is `~/.cache/kotlin-lsp`. Each Gradle root has
@@ -135,7 +188,11 @@ Files in `<cache root>/<key>/`:
 | `variants.json` | The variants of each module |
 | `missing-sources.json` | The SDK and Gradle sources that the background download must fetch |
 | `lsp-library-sources.gradle` | The init script that the binary writes at each start |
+| `ScriptModel.java` | The Tooling API client that `script-model` writes at each run |
+| `script-model.lock` | Lock that allows one `script-model` run at a time. A second run waits. |
 | `library-sources/workspace.json` | The libraries with their sources, for the server |
+| `library-sources/gradle-home.txt` | The Gradle distribution of the build, for `script-model` |
+| `library-sources/gradle-scripts.json` | The script model: the source path, the implicit imports, and the plugin classes of each script |
 | `library-sources/fragments/` | The part of `workspace.json` of each Gradle build |
 | `library-sources/fragments/.lock` | Lock for the merge of the fragments |
 | `library-sources/empty/` | An empty content root for the module `lsp-library-sources` |
@@ -153,7 +210,13 @@ Files in `<cache root>/`, shared by all roots:
 
 - One variant for the whole build. `kotlin-lsp` reads one variant name, so each module cannot have
   a different variant.
-- No navigation in `.gradle.kts` files (kotlin-lsp issue #55).
+- In `.gradle.kts` files, the navigation is a name lookup, not a compiler resolution. A jump can
+  give more than one declaration, for example all overloads. A name in a block with no known
+  receiver type goes to the steps after the block step.
+- The references from `.gradle.kts` files contain only the uses that go to the same declaration. A
+  use that goes to an override of the declaration is not in the list.
+- In a large build, a lookup in a `.gradle.kts` file takes some seconds. The references do one
+  lookup for each match of the name.
 - No `R` class in library modules (kotlin-lsp issue #280).
 - No fixes or patches for `kotlin-lsp`: the repo only works around it.
 
@@ -168,6 +231,8 @@ Lua tests, with no user config:
 ```sh
 nvim --clean --headless -l tests/jar_spec.lua
 nvim --clean --headless -l tests/retry_spec.lua
+nvim --clean --headless -l tests/script_lookup_spec.lua
+nvim --clean --headless -l tests/script_model_spec.lua
 nvim --clean --headless -l tests/sources_spec.lua
 nvim --clean --headless -l tests/start_spec.lua
 nvim --clean --headless -l tests/variant_spec.lua
