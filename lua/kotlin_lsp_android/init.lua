@@ -27,6 +27,7 @@ function M.setup(opts)
   })
   require('kotlin_lsp_android.jar').setup(get_last_root)
   require('kotlin_lsp_android.variant').setup(get_last_root, executable)
+  require('kotlin_lsp_android.script_model').setup(executable)
 end
 
 ---@param bufnr integer
@@ -136,9 +137,21 @@ function M.cmd(dispatchers, config)
     start_again(code, signal)
   end
   local indexing = require('kotlin_lsp_android.indexing').new()
+  local observe_indexing = indexing.observe(dispatchers.notification)
+  -- The import writes the Gradle home that the script model needs. The model changes with it.
+  ---@param method string
+  ---@param params table
+  local function notification(method, params)
+    observe_indexing(method, params)
+    if method == '$/progress' and type(params.value) == 'table' and params.value.kind == 'end' and not indexing.is_active() then
+      vim.schedule(function()
+        require('kotlin_lsp_android.script_model').refresh(config.root_dir)
+      end)
+    end
+  end
   rpc = vim.lsp.rpc.start(
     { executable, '--stdio' },
-    vim.tbl_extend('force', dispatchers, { on_exit = on_exit_after_start, notification = indexing.observe(dispatchers.notification) }),
+    vim.tbl_extend('force', dispatchers, { on_exit = on_exit_after_start, notification = notification }),
     { cwd = config.root_dir }
   )
   -- The change is in the RPC client, not in a handler, so that each consumer of locations, for

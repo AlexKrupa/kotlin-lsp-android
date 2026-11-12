@@ -37,8 +37,10 @@ vim.fn.writefile({ 'class A' }, project_file)
 vim.cmd.edit(vim.fn.fnameescape(project_file))
 
 -- The start progress ends before `on_init`.
+local script_model_calls = work_dir .. '/script-model-calls'
 plugin.setup({ executable = write_executable({
   '#!/bin/sh',
+  ('[ "$1" = script-model ] && { echo run >> %s; exit 0; }'):format(script_model_calls),
   ('exec nvim --clean --headless -l %s/tests/fake_kotlin_lsp.lua'):format(repo_root),
 }) })
 local kinds_at_init
@@ -54,6 +56,13 @@ assert(vim.wait(5000, function()
   return kinds_at_init ~= nil
 end), 'the client did not initialize')
 assert(vim.deep_equal(kinds_at_init, { 'begin', 'end' }), ('start progress at on_init = %s, want begin, end'):format(vim.inspect(kinds_at_init)))
+
+-- The end of the indexing progress starts the script model run, and the start progress does not.
+assert(vim.fn.filereadable(script_model_calls) == 0, 'script-model ran before the end of the indexing')
+assert(vim.lsp.get_client_by_id(client_id)):notify('test/endIndexing')
+assert(vim.wait(5000, function()
+  return vim.fn.filereadable(script_model_calls) == 1
+end), 'script-model did not run at the end of the indexing')
 assert(vim.lsp.get_client_by_id(client_id)):stop()
 assert(vim.wait(5000, function()
   return vim.lsp.get_client_by_id(client_id) == nil
