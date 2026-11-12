@@ -175,6 +175,22 @@ function M.cmd(dispatchers, config)
         callback(err, result)
       end, notify_reply_callback)
     end
+    -- The server does not analyze Gradle scripts.
+    if method == 'textDocument/hover' and params.textDocument.uri:match('%.gradle%.kts$') then
+      return request(method, params, function(err, result)
+        if err == nil and result ~= nil then
+          return callback(err, result)
+        end
+        -- The lookup waits for `rg` and `unzip`, which a fast event cannot do.
+        vim.schedule(function()
+          local hover = require('kotlin_lsp_android.script_lookup').hover(params, config.root_dir)
+          if hover then
+            return callback(nil, hover)
+          end
+          callback(err, result)
+        end)
+      end, notify_reply_callback)
+    end
     if not location_methods[method] then
       return request(method, params, callback, notify_reply_callback)
     end

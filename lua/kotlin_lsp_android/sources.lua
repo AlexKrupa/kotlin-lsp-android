@@ -451,6 +451,7 @@ end
 -- For the lookup in Gradle scripts
 M.cache_dir = cache_dir
 M.name_lookup_limit = name_lookup_limit
+M.declaration_line_count = declaration_line_count
 M.open_sources = open_sources
 M.find_symbol = find_symbol
 M.search_declarations = search_declarations

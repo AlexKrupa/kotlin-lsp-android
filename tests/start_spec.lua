@@ -63,6 +63,26 @@ assert(vim.lsp.get_client_by_id(client_id)):notify('test/endIndexing')
 assert(vim.wait(5000, function()
   return vim.fn.filereadable(script_model_calls) == 1
 end), 'script-model did not run at the end of the indexing')
+
+-- The fake server has no hover, so a hover in a Gradle script gets the result of the lookup.
+local script_hover = { contents = { kind = 'markdown', value = 'from the lookup' } }
+local lookup_params = {}
+require('kotlin_lsp_android.script_lookup').hover = function(params)
+  table.insert(lookup_params, params)
+  return script_hover
+end
+local function hover_in(path)
+  vim.fn.writefile({ 'x' }, path)
+  local params = { textDocument = { uri = vim.uri_from_fname(path) }, position = { line = 0, character = 0 } }
+  local response = assert(vim.lsp.get_client_by_id(client_id)):request_sync('textDocument/hover', params, 5000)
+  return assert(response, 'no hover response').result
+end
+assert(vim.deep_equal(hover_in(project_dir .. '/build.gradle.kts'), script_hover), 'hover in a Gradle script is not the result of the lookup')
+assert(#lookup_params == 1 and lookup_params[1].textDocument.uri:match('build%.gradle%.kts$'), 'the lookup did not get the hover request')
+assert(hover_in(project_dir .. '/B.kt') == nil, 'hover in another file is not the result of the server')
+assert(#lookup_params == 1, 'the lookup ran for a file that is not a Gradle script')
+assert(vim.deep_equal(hover_in(project_dir .. '/error.gradle.kts'), script_hover), 'hover after a server error in a Gradle script is not the result of the lookup')
+
 assert(vim.lsp.get_client_by_id(client_id)):stop()
 assert(vim.wait(5000, function()
   return vim.lsp.get_client_by_id(client_id) == nil

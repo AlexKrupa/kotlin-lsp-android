@@ -24,7 +24,7 @@ end
 
 local handlers = {
   initialize = function()
-    return { capabilities = { definitionProvider = true } }
+    return { capabilities = { definitionProvider = true, hoverProvider = true } }
   end,
   initialized = function()
     indexing = true

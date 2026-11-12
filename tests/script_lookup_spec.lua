@@ -86,7 +86,18 @@ write_files(dependency_accessors_dir, {
 })
 
 local plugin_dir = work_dir .. '/plugin/src'
-local base_default_config_lines = { 'package com.example.dsl', '', 'interface BaseDefaultConfig {', '    var compileSdk: Int?', '}' }
+local base_default_config_lines = {
+  'package com.example.dsl',
+  '',
+  'interface BaseDefaultConfig {',
+  '    /**',
+  '     * The API level to compile against.',
+  '     *',
+  '     * Set it in each module.',
+  '     */',
+  '    var compileSdk: Int?',
+  '}',
+}
 local application_extension_lines = { 'package com.example', '', 'interface ApplicationExtension :', '    CommonExtension {', '    var namespace: String?', '}' }
 local plugin_files = {
   ['com/example/ApplicationExtension.kt'] = application_extension_lines,
@@ -103,7 +114,11 @@ local plugin_files = {
   ['com/example/dsl/BaseDefaultConfig.kt'] = base_default_config_lines,
   ['com/example/LibraryExtension.kt'] = { 'package com.example', '', 'interface LibraryExtension {', '    var namespace: String?', '}' },
   ['com/example/AppPlugin.kt'] = { 'package com.example', '', 'class AppPlugin : Plugin<Project> {', '}' },
-  ['com/example/ManagedDevice.kt'] = { 'package com.example', '', 'class ManagedDevice' },
+  ['java/io/File.java'] = { 'package java.io;', '', 'public class File {', '}' },
+  ['com/example/ManagedDevice.kt'] = { 'package com.example', '', 'class ManagedDevice(', '    val name: String', ') {', '}' },
+  ['com/example/Wide.kt'] = vim.list_extend({ 'package com.example', '', 'class Wide(' }, vim.tbl_map(function(index)
+    return ('    val p%d: Int,'):format(index)
+  end, vim.fn.range(50))),
 }
 -- A supertype chain of 6 levels: `Deep0 : Deep1`, ..., `Deep5 : Deep6`.
 for level = 0, 6 do
@@ -125,6 +140,9 @@ local project_lines = {
   'import org.gradle.api.plugins.ExtensionAware;',
   'import org.gradle.api.plugins.PluginAware;',
   '',
+  '/**',
+  ' * Gives access to the build model.',
+  ' */',
   'public interface Project extends Comparable<Project>, ExtensionAware, PluginAware {',
   '    Project getRootProject();',
   '',
@@ -195,6 +213,8 @@ local source_path = { accessors_dir, dependency_accessors_dir, plugin_dir, other
 
 local script_lines = {
   'import com.example.ManagedDevice',
+  'import com.example.Wide',
+  'import com.other.Remote',
   '',
   'plugins {',
   '    id("com.example.app")',
@@ -370,6 +390,47 @@ assert_location(
   'accessor'
 )
 
+local function hover_value(line_text, word)
+  local hover = lookup.hover(params_at(line_text, word), root_dir)
+  assert(hover and hover.contents.kind == 'markdown', ('%s: hover = %s, want markdown'):format(word, vim.inspect(hover)))
+  return hover.contents.value
+end
+
+assert_equal(
+  hover_value('compileSdk = 36', 'compileSdk'),
+  table.concat({ 'The API level to compile against.', '', 'Set it in each module.', '', '```kotlin', 'var compileSdk: Int?', '```' }, '\n'),
+  'hover with KDoc'
+)
+assert_equal(
+  hover_value('ManagedDevice? = null', 'ManagedDevice'),
+  table.concat({ '```kotlin', 'class ManagedDevice(', '    val name: String', ')', '```' }, '\n'),
+  'hover on a declaration that ends at a brace'
+)
+assert_equal(
+  hover_value('val root: Project', 'Project'),
+  table.concat({
+    'Gives access to the build model.',
+    '',
+    '```java',
+    'public interface Project extends Comparable<Project>, ExtensionAware, PluginAware',
+    '```',
+  }, '\n'),
+  'hover on a Java declaration with Javadoc'
+)
+assert_equal(
+  hover_value('implementation(libs.androidx', 'implementation'),
+  table.concat({
+    "Adds a dependency to the 'implementation' configuration.",
+    '',
+    '```kotlin',
+    'fun DependencyHandler.`implementation`(dependencyNotation: Any): Dependency?',
+    '```',
+  }, '\n'),
+  'hover on a declaration that ends at an equals sign'
+)
+local wide_hover = hover_value('import com.example.Wide', 'Wide')
+assert_equal(#vim.split(wide_hover, '\n'), 40 + 2, 'lines of a declaration over the limit, with the fence')
+
 -- Review focus 2: braces in strings and comments.
 local lines = {
   'android {',
@@ -451,6 +512,8 @@ assert_location(
   3,
   'getter of the settings receiver'
 )
+
+assert_equal(lookup.hover(params_at('unknownBlock { foo }', 'unknownBlock'), root_dir), nil, 'hover on a location with no readable file')
 
 -- A script that is not in the model, for example a new file.
 other_library_names = {}

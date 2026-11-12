@@ -562,4 +562,97 @@ function M.definition(params, root_dir)
     or sources.find_in_other_libraries({ symbol }, params, root_dir)
 end
 
+-- Hover
+
+---@return integer first_index first line of the annotations above the declaration
+---@return string[] doc_lines text of the KDoc or Javadoc comment directly above them
+local function find_leading_lines(lines, declaration_index)
+  local first_index = declaration_index
+  while first_index > 1 and vim.trim(lines[first_index - 1]):match('^@') do
+    first_index = first_index - 1
+  end
+  local doc_end = first_index - 1
+  if doc_end < 1 or not vim.trim(lines[doc_end]):match('%*/$') then
+    return first_index, {}
+  end
+  local doc_start = doc_end
+  while doc_start > 1 and not vim.trim(lines[doc_start]):match('^/%*') do
+    doc_start = doc_start - 1
+  end
+  if not vim.trim(lines[doc_start]):match('^/%*%*') then
+    return first_index, {}
+  end
+  local doc_lines = {}
+  for index = doc_start, doc_end do
+    local text = vim.trim(lines[index]):gsub('^/%*%*+%s*', ''):gsub('%s*%*+/$', ''):gsub('^%*%s?', '')
+    table.insert(doc_lines, text)
+  end
+  return first_index, vim.split(vim.trim(table.concat(doc_lines, '\n')), '\n')
+end
+
+-- The declaration ends before the first `{` or `=` outside parentheses, or at the first line that
+-- ends it, or after the line limit.
+---@return string[]
+local function find_declaration_lines(lines, first_index)
+  local declaration_lines = {}
+  local depth = 0
+  for index = first_index, math.min(#lines, first_index + sources.declaration_line_count - 1) do
+    local line = lines[index]
+    for column = 1, #line do
+      local char = line:sub(column, column)
+      if char == '(' then
+        depth = depth + 1
+      elseif char == ')' then
+        depth = depth - 1
+      elseif depth == 0 and (char == '{' or char == '=') then
+        local head = line:sub(1, column - 1):gsub('%s+$', '')
+        table.insert(declaration_lines, head)
+        return declaration_lines
+      end
+    end
+    table.insert(declaration_lines, line)
+    if depth == 0 and not line:match('[,:(]%s*$') then
+      return declaration_lines
+    end
+  end
+  return declaration_lines
+end
+
+---@return string[]? lines
+---@return string? filetype
+local function read_lines(uri, root_dir)
+  if vim.startswith(uri, 'jar://') then
+    local text, filetype = require('kotlin_lsp_android.jar').read_jar_entry(uri, root_dir)
+    return vim.split(text, '\n'), filetype
+  end
+  local path = vim.uri_to_fname(uri)
+  if vim.fn.filereadable(path) == 0 then
+    return nil
+  end
+  return vim.fn.readfile(path), vim.filetype.match({ filename = path })
+end
+
+---@param params lsp.TextDocumentPositionParams for a `.gradle.kts` file
+---@return lsp.Hover?
+function M.hover(params, root_dir)
+  local location = (M.definition(params, root_dir) or {})[1]
+  if not location then
+    return nil
+  end
+  local lines, filetype = read_lines(location.uri, root_dir)
+  if not lines then
+    return nil
+  end
+  local declaration_index = location.range.start.line + 1
+  local first_index, doc_lines = find_leading_lines(lines, declaration_index)
+  local code_lines = vim.list_extend(vim.list_slice(lines, first_index, declaration_index - 1), find_declaration_lines(lines, declaration_index))
+  local indent = lines[declaration_index]:match('^%s*')
+  local code = table.concat(vim.tbl_map(function(line)
+    return vim.startswith(line, indent) and line:sub(#indent + 1) or line
+  end, code_lines), '\n')
+  local parts = #doc_lines > 0 and { table.concat(doc_lines, '\n') } or {}
+  table.insert(parts, ('```%s\n%s\n```'):format(filetype or '', code))
+  return { contents = { kind = 'markdown', value = table.concat(parts, '\n\n') } }
+end
+
 return M

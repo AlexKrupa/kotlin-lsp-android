@@ -42,6 +42,8 @@ local function read_jar_entry(uri, root_dir)
   return decompiled.code, decompiled.language
 end
 
+M.read_jar_entry = read_jar_entry
+
 ---@param get_last_root fun(): string?
 function M.setup(get_last_root)
   -- The buffer keeps an empty `buftype`, because `vim.lsp.enable` attaches only to such buffers.
