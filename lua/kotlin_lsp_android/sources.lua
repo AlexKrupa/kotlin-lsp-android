@@ -77,6 +77,48 @@ local function open_sources(source_root)
   end
 end
 
+---@type table<string, { mtime: integer, packages: table<string, true> }>
+local packages_by_jar_cache = {}
+
+-- The entries of a jar can be in a top folder that is not part of the package, so each folder
+-- gives all package names that it can have.
+---@return table<string, true> package names
+local function jar_packages(jar_path, stat)
+  local cached = packages_by_jar_cache[jar_path]
+  if cached and cached.mtime == stat.mtime.sec then
+    return cached.packages
+  end
+  local packages = {}
+  local output = vim.system({ 'unzip', '-Z1', jar_path }, { text = true }):wait().stdout
+  for entry in vim.gsplit(output, '\n', { trimempty = true }) do
+    local folder = entry:match('^(.*)/[^/]+$')
+    local package_name = folder and folder:gsub('/', '.')
+    while package_name and not packages[package_name] do
+      packages[package_name] = true
+      package_name = package_name:match('^[^.]+%.(.+)$')
+    end
+  end
+  packages_by_jar_cache[jar_path] = { mtime = stat.mtime.sec, packages = packages }
+  return packages
+end
+
+---@param source_roots string[] sources jars and directories
+---@return string[] source roots with a folder for the package
+function M.roots_with_package(source_roots, package_name)
+  local package_path = package_name:gsub('%.', '/')
+  return vim.tbl_filter(function(source_root)
+    -- A missing jar or directory has no package.
+    local stat = vim.uv.fs_stat(source_root)
+    if not stat then
+      return false
+    end
+    if stat.type == 'directory' then
+      return vim.uv.fs_stat(source_root .. '/' .. package_path) ~= nil
+    end
+    return jar_packages(source_root, stat)[package_name] == true
+  end, source_roots)
+end
+
 ---@return string? identifier at the position of a request
 local function find_symbol(params)
   local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
@@ -118,7 +160,8 @@ end
 ---@param types_only boolean
 local function search_declarations(paths, symbol, types_only)
   local type_declaration = '\\b(class|interface|object|enum|record|typealias)\\s+' .. symbol .. '\\b|@interface\\s+' .. symbol .. '\\b'
-  local declaration = type_declaration .. '|\\b(fun|val|var)\\s+(<[^>]*>\\s*)?([\\w.<>?, ]+\\.)?' .. symbol .. '\\b'
+  -- The Gradle accessors put each name in backticks.
+  local declaration = type_declaration .. '|\\b(fun|val|var)\\s+(<[^>]*>\\s*)?([\\w.<>?, ]+\\.)?`?' .. symbol .. '\\b'
   local matches = search(types_only and type_declaration or declaration, paths)
   if #matches == 0 and not types_only then
     -- A Java member has a type before its name. A call in a method body can match too, so this
@@ -291,23 +334,31 @@ local function find_document_sources(uri)
   return path:match('^(.*/sources/android%-[^/]+)/') or path:match('^(.*/gradle%-sources/gradle%-[^/]+)/') or path:match('^(.*/wrapper/dists/.-/src)/')
 end
 
--- The server finds the class file of a full name, and that class file maps to sources like any
--- location from the server.
+-- The server finds the class files of a name, and these class files map to sources like any
+-- location from the server. The first name with a result wins.
+---@param names string[] full or simple names
 ---@return lsp.Location[]?
-local function find_in_other_libraries(full_names, params, root_dir)
+local function find_in_other_libraries(names, params, root_dir)
   local client = vim.iter(vim.lsp.get_clients({ name = 'kotlin_lsp' })):find(function(candidate)
     return candidate.root_dir == root_dir
   end)
   if not client then
     return nil
   end
-  for _, full_name in ipairs(full_names) do
-    local response = client:request_sync('workspace/symbol', { query = full_name }, 10000)
-    local found = vim.iter(response and response.result or {}):find(function(item)
-      return item.name == full_name
-    end)
-    if found then
-      return M.to_sources({ found.location }, params, root_dir)
+  for _, name in ipairs(names) do
+    local response = client:request_sync('workspace/symbol', { query = name }, 10000)
+    local locations = vim
+      .iter(response and response.result or {})
+      :filter(function(item)
+        return item.name == name
+      end)
+      :take(name_lookup_limit)
+      :map(function(item)
+        return item.location
+      end)
+      :totable()
+    if #locations > 0 then
+      return M.to_sources(locations, params, root_dir)
     end
   end
   return nil
@@ -379,6 +430,10 @@ end
 ---@return lsp.Location|lsp.Location[]|lsp.LocationLink[]|nil
 function M.to_sources(result, params, root_dir)
   if result == nil or (vim.islist(result) and #result == 0) then
+    -- The server does not analyze Gradle scripts.
+    if params.textDocument.uri:match('%.gradle%.kts$') then
+      return require('kotlin_lsp_android.script_lookup').definition(params, root_dir) or result
+    end
     return find_by_name(params, root_dir) or result
   end
   local symbol = find_symbol(params)
@@ -392,5 +447,14 @@ function M.to_sources(result, params, root_dir)
   end
   return mapped
 end
+
+-- For the lookup in Gradle scripts
+M.cache_dir = cache_dir
+M.name_lookup_limit = name_lookup_limit
+M.open_sources = open_sources
+M.find_symbol = find_symbol
+M.search_declarations = search_declarations
+M.to_location = to_location
+M.find_in_other_libraries = find_in_other_libraries
 
 return M
