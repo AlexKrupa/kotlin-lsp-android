@@ -2,7 +2,8 @@
 -- definition results during and after the indexing. The indexing starts at `initialized` and at
 -- `test/beginIndexing`, and ends at `test/endIndexing`. After `test/classOnly`, each result is the
 -- class file. `textDocument/references` gives the location `FAKE_REFERENCE_URI`. `workspace/symbol`
--- gives the location `FAKE_SOURCE_URI` for the query.
+-- gives the locations `FAKE_SOURCE_URI` and `FAKE_REFERENCE_URI` for the query, and one more name. In a Gradle script, a definition gives an
+-- error, and a hover has empty contents. A hover in `error.gradle.kts` gives an error.
 local indexing = false
 local class_only = false
 local definition_count = 0
@@ -45,9 +46,21 @@ local handlers = {
   ['test/definitionCount'] = function()
     return definition_count
   end,
-  ['textDocument/definition'] = function()
+  ['textDocument/definition'] = function(params)
+    if params.textDocument.uri:match('%.gradle%.kts$') then
+      return nil, { code = -32603, message = 'no analysis of Gradle scripts' }
+    end
     definition_count = definition_count + 1
     return { location((indexing or class_only) and vim.env.FAKE_CLASS_URI or vim.env.FAKE_SOURCE_URI) }
+  end,
+  ['textDocument/hover'] = function(params)
+    if params.textDocument.uri:match('/error%.gradle%.kts$') then
+      return nil, { code = -32603, message = 'no analysis of Gradle scripts' }
+    end
+    if params.textDocument.uri:match('%.gradle%.kts$') then
+      return { contents = { kind = 'markdown', value = '' } }
+    end
+    return nil
   end,
   ['textDocument/references'] = function()
     return { location(vim.env.FAKE_REFERENCE_URI) }
@@ -80,8 +93,11 @@ while true do
   end
   local message = vim.json.decode(io.stdin:read(length))
   local handler = handlers[message.method]
-  local result = handler and handler(message.params)
+  local result, err
+  if handler then
+    result, err = handler(message.params)
+  end
   if message.id then
-    send({ id = message.id, result = result == nil and vim.NIL or result })
+    send(err and { id = message.id, error = err } or { id = message.id, result = result == nil and vim.NIL or result })
   end
 end

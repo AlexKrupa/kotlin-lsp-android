@@ -68,7 +68,7 @@ assert(vim.wait(5000, function()
   return vim.fn.filereadable(script_model_calls) == 1
 end), 'script-model did not run at the end of the indexing')
 
--- The fake server has no hover, so a hover in a Gradle script gets the result of the lookup.
+-- The hover of the fake server in a Gradle script has empty contents, so the result is the lookup.
 local script_hover = { contents = { kind = 'markdown', value = 'from the lookup' } }
 local lookup_params = {}
 require('kotlin_lsp_android.script_lookup').hover = function(params)
@@ -86,6 +86,25 @@ assert(#lookup_params == 1 and lookup_params[1].textDocument.uri:match('build%.g
 assert(hover_in(project_dir .. '/B.kt') == nil, 'hover in another file is not the result of the server')
 assert(#lookup_params == 1, 'the lookup ran for a file that is not a Gradle script')
 assert(vim.deep_equal(hover_in(project_dir .. '/error.gradle.kts'), script_hover), 'hover after a server error in a Gradle script is not the result of the lookup')
+
+-- The fake server replies to a definition in a Gradle script with an error, so the result is the
+-- lookup.
+local script_location = { uri = vim.uri_from_fname(project_dir .. '/Declaration.kt'), range = { start = { line = 1, character = 0 }, ['end'] = { line = 1, character = 0 } } }
+local script_lookup = require 'kotlin_lsp_android.script_lookup'
+local script_definition = script_lookup.definition
+script_lookup.definition = function()
+  return { script_location }
+end
+local definition_response = assert(vim.lsp.get_client_by_id(client_id)):request_sync(
+  'textDocument/definition',
+  { textDocument = { uri = vim.uri_from_fname(project_dir .. '/build.gradle.kts') }, position = { line = 0, character = 0 } },
+  5000
+)
+assert(
+  definition_response and definition_response.err == nil and vim.deep_equal(definition_response.result, { script_location }),
+  ('definition in a Gradle script = %s, want the result of the lookup'):format(vim.inspect(definition_response))
+)
+script_lookup.definition = script_definition
 
 -- References from a Kotlin buffer: the server result and the uses in Gradle scripts. The script is
 -- not in the model, so the lookup asks the server, which finds the declaration of the definition.

@@ -71,6 +71,22 @@ local function to_locations(located)
   end, located == nil and {} or vim.islist(located) and located or { located })
 end
 
+---@param hover lsp.Hover?
+---@return boolean
+local function has_contents(hover)
+  local contents = hover and hover.contents
+  if type(contents) == 'string' then
+    return contents ~= ''
+  end
+  if type(contents) ~= 'table' then
+    return false
+  end
+  if contents.value ~= nil then
+    return contents.value ~= ''
+  end
+  return #contents > 0
+end
+
 -- The proxy exits with this code when the server closes the connection, for example after
 -- `variant set` in any Neovim instance.
 local server_closed_exit_code = 3
@@ -168,6 +184,10 @@ function M.cmd(dispatchers, config)
   ---@param on_located fun(err: lsp.ResponseError?, located: lsp.Location[]|lsp.LocationLink[]|nil, was_indexing: boolean)
   local function request_located(method, params, on_located, notify_reply_callback)
     return request(method, params, function(err, result)
+      -- The server does not analyze Gradle scripts. Its error is the same as an empty result.
+      if err ~= nil and params.textDocument.uri:match('%.gradle%.kts$') then
+        err, result = nil, nil
+      end
       -- The `$/progress` end can come directly after the result, before the scheduled callback.
       local was_indexing = indexing.is_active()
       -- The search waits for `rg` and `unzip`, which a fast event cannot do.
@@ -222,7 +242,7 @@ function M.cmd(dispatchers, config)
     -- The server does not analyze Gradle scripts.
     if method == 'textDocument/hover' and params.textDocument.uri:match('%.gradle%.kts$') then
       return request(method, params, function(err, result)
-        if err == nil and result ~= nil then
+        if err == nil and has_contents(result) then
           return callback(err, result)
         end
         -- The lookup waits for `rg` and `unzip`, which a fast event cannot do.
