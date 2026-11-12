@@ -492,12 +492,12 @@ local function find_members(declared_type, type_lines, name)
 end
 
 -- The receiver of a block is `T` in `Action<T>` or `T.() -> Unit`, or the type `: T` of a property or
--- function.
+-- function. The variance of `T` (`in T`, `? super T`) does not change the receiver.
 ---@return string? type name in the declaration
 local function block_type_name(declaration, name)
   local action_type = declaration:match('Action%s*<%s*([^>]+)')
   if action_type then
-    return action_type:gsub('^%?%s+super%s+', ''):match('^[%w_.]+')
+    return action_type:gsub('^%?%s+super%s+', ''):gsub('^%?%s+extends%s+', ''):gsub('^in%s+', ''):gsub('^out%s+', ''):match('^[%w_.]+')
   end
   return declaration:match('([%w_.]+)%s*%b<>%s*%.%s*%(%)%s*%->')
     or declaration:match('([%w_.]+)%s*%.%s*%(%)%s*%->')
@@ -562,8 +562,10 @@ local function first_receivers(script_path)
   return project_first_receivers
 end
 
--- Kotlin searches the name in the receiver of the inner block first, then in the receivers of the
--- outer blocks, for example `compileSdk` of `android { }` in `android { defaultConfig { } }`.
+-- Kotlin searches a name in the receiver of the inner block first, then in the receivers of the
+-- outer blocks, for example `compileSdk` of `android { }` in `android { defaultConfig { } }`. This
+-- applies to the block names too, for example a member extension of `android { }` in
+-- `android { buildTypes { release { } } }`.
 ---@param position lsp.Position
 ---@return lsp.Location[]?
 local function find_in_receiver(lines, position, symbol, model, script_path)
@@ -577,15 +579,16 @@ local function find_in_receiver(lines, position, symbol, model, script_path)
   local receivers_inner_first = { receivers }
   for _, name in ipairs(M.enclosing_blocks(lines, position)) do
     local block_receiver
-    for _, receiver in ipairs(receivers) do
-      block_receiver = block_receiver or block_type(receiver, name, model.source_path)
+    for _, level_receivers in ipairs(receivers_inner_first) do
+      for _, receiver in ipairs(level_receivers) do
+        block_receiver = block_receiver or block_type(receiver, name, model.source_path)
+      end
     end
     -- The name can be a member of the unknown receiver, so an outer receiver is only a guess.
     if not block_receiver then
       return nil
     end
-    receivers = { block_receiver }
-    table.insert(receivers_inner_first, 1, receivers)
+    table.insert(receivers_inner_first, 1, { block_receiver })
   end
   for _, level_receivers in ipairs(receivers_inner_first) do
     for _, receiver in ipairs(level_receivers) do

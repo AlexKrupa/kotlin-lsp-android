@@ -117,9 +117,25 @@ local base_default_config_lines = {
   '    var compileSdk: Int?',
   '}',
 }
-local application_extension_lines = { 'package com.example', '', 'interface ApplicationExtension :', '    CommonExtension {', '    var namespace: String?', '}' }
+-- As in AGP: `release` is a member extension of the container of `buildTypes`.
+local application_extension_lines = {
+  'package com.example',
+  '',
+  'interface ApplicationExtension :',
+  '    CommonExtension {',
+  '    var namespace: String?',
+  '',
+  '    fun buildTypes(action: Action<in Container<BuildType>>)',
+  '',
+  '    fun Container<BuildType>.release(action: BuildType.() -> Unit)',
+  '}',
+}
+local container_lines = { 'package com.example', '', 'interface Container<T> {', '    fun findByName(name: String): T?', '}' }
+local build_type_lines = { 'package com.example', '', 'interface BuildType {', '    var isMinifyEnabled: Boolean', '}' }
 local plugin_files = {
   ['com/example/ApplicationExtension.kt'] = application_extension_lines,
+  ['com/example/Container.kt'] = container_lines,
+  ['com/example/BuildType.kt'] = build_type_lines,
   ['com/example/CommonExtension.kt'] = {
     'package com.example',
     '',
@@ -253,6 +269,12 @@ local script_lines = {
   '    defaultConfig {',
   '        compileSdk = 36',
   '        buildToolsVersion = "36.0.0"',
+  '    }',
+  '    buildTypes {',
+  '        findByName("debug")',
+  '        release {',
+  '            isMinifyEnabled = true',
+  '        }',
   '    }',
   '}',
   '',
@@ -545,6 +567,19 @@ assert_location(
   folder_uri(plugin_dir, 'com/example/CommonExtension.kt'),
   7,
   'member of the outer block receiver'
+)
+
+assert_location(
+  lookup.definition(params_at('findByName("debug")', 'findByName'), root_dir),
+  folder_uri(plugin_dir, 'com/example/Container.kt'),
+  line_index_of(container_lines, 'findByName'),
+  'member of the receiver from Action<in T>'
+)
+assert_location(
+  lookup.definition(params_at('isMinifyEnabled = true', 'isMinifyEnabled'), root_dir),
+  folder_uri(plugin_dir, 'com/example/BuildType.kt'),
+  line_index_of(build_type_lines, 'isMinifyEnabled'),
+  'member in a block from a member extension of the outer receiver'
 )
 
 local foo_accessor_uri = folder_uri(accessors_dir, 'org/gradle/kotlin/dsl/Accessors1.kt')
