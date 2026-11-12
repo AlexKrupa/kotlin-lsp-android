@@ -166,8 +166,9 @@ end
 ---@param types_only boolean
 local function search_declarations(paths, symbol, types_only)
   local type_declaration = '\\b(class|interface|object|enum|record|typealias)\\s+' .. symbol .. '\\b|@interface\\s+' .. symbol .. '\\b'
-  -- The Gradle accessors put each name in backticks.
-  local declaration = type_declaration .. '|\\b(fun|val|var)\\s+(<[^>]*>\\s*)?([\\w.<>?, ]+\\.)?`?' .. symbol .. '\\b'
+  -- The Gradle accessors put each name in backticks. A name before `.` is a part of the receiver, for
+  -- example `android` in `val com.android.Foo.bar`.
+  local declaration = type_declaration .. '|\\b(fun|val|var)\\s+(<[^>]*>\\s*)?([\\w.<>?, ]+\\.)?`?' .. symbol .. '\\b([^.]|$)'
   local matches = search(types_only and type_declaration or declaration, paths)
   if #matches == 0 and not types_only then
     -- A Java member has a type before its name. A call in a method body can match too, so this

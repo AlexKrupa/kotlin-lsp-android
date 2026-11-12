@@ -55,6 +55,12 @@ write_files(accessors_dir, {
     '',
     'val org.gradle.api.Project.`foo`: Int get() = 0',
   },
+  -- The name is a part of the package of the receiver.
+  ['org/gradle/kotlin/dsl/Accessors2.kt'] = {
+    'package org.gradle.kotlin.dsl',
+    '',
+    'val com.example.android.ExampleExtension.`ext`: Int get() = 0',
+  },
   ['org/gradle/kotlin/dsl/ImplementationConfigurationAccessors.kt'] = {
     'package org.gradle.kotlin.dsl',
     '',
@@ -507,6 +513,13 @@ assert_location(
   line_index_of(application_extension_lines, 'namespace'),
   'member of the block receiver'
 )
+
+local android_accessor_uri = folder_uri(accessors_dir, 'org/gradle/kotlin/dsl/Accessors1.kt')
+local function accessor_at(line_index)
+  local position = { line = line_index, character = 0 }
+  return { uri = android_accessor_uri, range = { start = position, ['end'] = position } }
+end
+assert_equal(lookup.definition(params_at('android {', 'android'), root_dir), { accessor_at(7), accessor_at(13) }, 'accessor with the name in the package of another receiver')
 
 -- Kotlin searches the receiver of the outer block after the receiver of the inner block.
 assert_location(
