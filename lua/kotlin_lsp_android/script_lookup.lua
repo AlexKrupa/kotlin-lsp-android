@@ -73,7 +73,7 @@ end
 local plugin_id_prefixes = { id = '', kotlin = 'org.jetbrains.kotlin.' }
 
 ---@return lsp.Location[]?
-local function find_plugin(line, column, model, params, root_dir)
+local function find_plugin(lines, line, column, model, params, root_dir)
   for function_name, prefix in pairs(plugin_id_prefixes) do
     for first_column, plugin_id, quote_column in line:gmatch('%f[%w_]' .. function_name .. '%s*%(%s*"()([^"]*)()"') do
       if column >= first_column - 1 and column <= quote_column then
@@ -86,7 +86,7 @@ local function find_plugin(line, column, model, params, root_dir)
           return { sources.to_location(found.uri_for, found) }
         end
         -- The server finds the classes of `build-logic`.
-        return sources.find_in_other_libraries({ class_name }, params, root_dir)
+        return sources.find_in_other_libraries({ class_name }, params, root_dir, lines)
       end
     end
   end
@@ -159,7 +159,7 @@ local function find_imported(lines, symbol, model, params, root_dir)
       -- The import can name a member of a class: the package ends before the class name.
       local package_name = full_name:match('^(.-)%.%u') or imported
       return to_locations(search_packages(model.source_path, { package_name }, symbol, false))
-        or sources.find_in_other_libraries({ full_name }, params, root_dir)
+        or sources.find_in_other_libraries({ full_name }, params, root_dir, lines)
     end
   end
   return nil
@@ -541,14 +541,14 @@ end
 function M.definition(params, root_dir, script_lines)
   local symbol = sources.find_symbol(params, script_lines)
   local model = script_model.get(root_dir, vim.uri_to_fname(params.textDocument.uri))
+  local lines = script_lines or vim.api.nvim_buf_get_lines(vim.uri_to_bufnr(params.textDocument.uri), 0, -1, false)
   if not model then
     -- Step 6 for a script with no entry, for example a new file.
-    return symbol and sources.find_in_other_libraries({ symbol }, params, root_dir)
+    return symbol and sources.find_in_other_libraries({ symbol }, params, root_dir, lines)
   end
-  local lines = script_lines or vim.api.nvim_buf_get_lines(vim.uri_to_bufnr(params.textDocument.uri), 0, -1, false)
   local line = lines[params.position.line + 1] or ''
   local column = params.position.character + 1
-  local found = find_plugin(line, column, model, params, root_dir)
+  local found = find_plugin(lines, line, column, model, params, root_dir)
   if found then
     return found
   end
@@ -558,9 +558,7 @@ function M.definition(params, root_dir, script_lines)
   return find_in_catalog(line, column, symbol, model, root_dir)
     or find_imported(lines, symbol, model, params, root_dir)
     or find_in_receiver(lines, params.position, symbol, model, vim.uri_to_fname(params.textDocument.uri))
-    or find_implicitly_imported(symbol, model)
-    or find_accessor(symbol, model)
-    or sources.find_in_other_libraries({ symbol }, params, root_dir)
+    or find_unpositioned(symbol, model, params, root_dir, lines)
 end
 
 M.reference_limit = 200

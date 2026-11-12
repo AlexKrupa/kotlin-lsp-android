@@ -343,8 +343,9 @@ end
 -- The server finds the class files of a name, and these class files map to sources like any
 -- location from the server. The first name with a result wins.
 ---@param names string[] full or simple names
+---@param lines string[]? lines of the document, default the lines of its buffer
 ---@return lsp.Location[]?
-local function find_in_other_libraries(names, params, root_dir)
+local function find_in_other_libraries(names, params, root_dir, lines)
   local client = vim.iter(vim.lsp.get_clients({ name = 'kotlin_lsp' })):find(function(candidate)
     return candidate.root_dir == root_dir
   end)
@@ -364,7 +365,7 @@ local function find_in_other_libraries(names, params, root_dir)
       end)
       :totable()
     if #locations > 0 then
-      return M.to_sources(locations, params, root_dir)
+      return M.to_sources(locations, params, root_dir, lines)
     end
   end
   return nil
@@ -433,16 +434,17 @@ local function find_by_name(params, root_dir)
 end
 
 ---@param result lsp.Location|lsp.Location[]|lsp.LocationLink[]|nil
+---@param lines string[]? lines of the document, default the lines of its buffer
 ---@return lsp.Location|lsp.Location[]|lsp.LocationLink[]|nil
-function M.to_sources(result, params, root_dir)
+function M.to_sources(result, params, root_dir, lines)
   if result == nil or (vim.islist(result) and #result == 0) then
     -- The server does not analyze Gradle scripts.
     if params.textDocument.uri:match('%.gradle%.kts$') then
-      return require('kotlin_lsp_android.script_lookup').definition(params, root_dir) or result
+      return require('kotlin_lsp_android.script_lookup').definition(params, root_dir, lines) or result
     end
     return find_by_name(params, root_dir) or result
   end
-  local symbol = find_symbol(params)
+  local symbol = find_symbol(params, lines)
   if not symbol then
     return result
   end

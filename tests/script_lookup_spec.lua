@@ -312,9 +312,10 @@ vim.fn.writefile({
 -- `workspace/symbol` needs a server.
 local other_library_location = { uri = 'file:///build-logic/Found.kt', range = { start = { line = 1, character = 0 }, ['end'] = { line = 1, character = 0 } } }
 local other_library_names = {}
-sources.find_in_other_libraries = function(names)
+local other_library_result = { other_library_location }
+sources.find_in_other_libraries = function(names, params, lookup_root_dir, lines)
   table.insert(other_library_names, names)
-  return { other_library_location }
+  return sources.to_sources(other_library_result, params, lookup_root_dir, lines)
 end
 
 local lookup = require 'kotlin_lsp_android.script_lookup'
@@ -566,6 +567,22 @@ assert_equal(other_library_names, { { 'remoteCall' } }, 'workspace/symbol querie
 
 assert_equal(#assert(lookup.references('limitName', {}, root_dir)), 0, 'references at the limit')
 assert_equal(lookup.references('overLimitName', {}, root_dir), nil, 'references above the limit')
+
+-- The server finds a class file of a library for a name in a script that is not in the model and not
+-- in a buffer. The class file maps to the same source as the target.
+local library_classes_jar = work_dir .. '/lib/example.jar'
+vim.fn.writefile({
+  vim.json.encode({ libraries = { { name = 'Example', roots = { { path = library_classes_jar }, { path = plugin_dir, type = 'SOURCES' } } } } }),
+}, sources.cache_dir(root_dir) .. '/library-sources/workspace.json')
+write_files(root_dir, { ['references/library.gradle.kts'] = { 'val device: ManagedDevice? = null' } })
+other_library_result = { { uri = ('jar://%s!/com/example/ManagedDevice.class'):format(library_classes_jar), range = compile_sdk_target.range } }
+local managed_device_target = { uri = folder_uri(plugin_dir, 'com/example/ManagedDevice.kt'), range = { start = { line = 2, character = 0 }, ['end'] = { line = 2, character = 0 } } }
+assert_equal(lookup.references('ManagedDevice', { managed_device_target }, root_dir), {
+  use_at('build.gradle.kts', line_index_of(script_lines, 'import com.example.ManagedDevice'), 19),
+  use_at('build.gradle.kts', line_index_of(script_lines, 'val device'), 16),
+  use_at('references/library.gradle.kts', 0, 12),
+}, 'references of a class file in a script with no buffer')
+other_library_result = { other_library_location }
 
 -- A script that is not in the model, for example a new file.
 other_library_names = {}
