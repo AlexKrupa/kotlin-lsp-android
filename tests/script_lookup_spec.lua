@@ -49,6 +49,11 @@ write_files(accessors_dir, {
     ' */',
     'fun org.gradle.api.Project.`android`(configure: Action<com.example.ApplicationExtension>): Unit =',
     '    (this as org.gradle.api.plugins.ExtensionAware).extensions.configure("android", configure)',
+    '',
+    'fun org.gradle.api.Project.`deep`(configure: Action<com.example.Deep0>): Unit =',
+    '    (this as org.gradle.api.plugins.ExtensionAware).extensions.configure("deep", configure)',
+    '',
+    'val org.gradle.api.Project.`foo`: Int get() = 0',
   },
   ['org/gradle/kotlin/dsl/ImplementationConfigurationAccessors.kt'] = {
     'package org.gradle.kotlin.dsl',
@@ -81,11 +86,32 @@ write_files(dependency_accessors_dir, {
 })
 
 local plugin_dir = work_dir .. '/plugin/src'
-write_files(plugin_dir, {
-  ['com/example/ApplicationExtension.kt'] = { 'package com.example', '', 'interface ApplicationExtension' },
+local base_default_config_lines = { 'package com.example.dsl', '', 'interface BaseDefaultConfig {', '    var compileSdk: Int?', '}' }
+local application_extension_lines = { 'package com.example', '', 'interface ApplicationExtension :', '    CommonExtension {', '    var namespace: String?', '}' }
+local plugin_files = {
+  ['com/example/ApplicationExtension.kt'] = application_extension_lines,
+  ['com/example/CommonExtension.kt'] = {
+    'package com.example',
+    '',
+    'import com.example.dsl.ApplicationDefaultConfig',
+    '',
+    'interface CommonExtension {',
+    '    fun defaultConfig(action: ApplicationDefaultConfig.() -> Unit)',
+    '}',
+  },
+  ['com/example/dsl/ApplicationDefaultConfig.kt'] = { 'package com.example.dsl', '', 'interface ApplicationDefaultConfig : BaseDefaultConfig' },
+  ['com/example/dsl/BaseDefaultConfig.kt'] = base_default_config_lines,
+  ['com/example/LibraryExtension.kt'] = { 'package com.example', '', 'interface LibraryExtension {', '    var namespace: String?', '}' },
   ['com/example/AppPlugin.kt'] = { 'package com.example', '', 'class AppPlugin : Plugin<Project> {', '}' },
   ['com/example/ManagedDevice.kt'] = { 'package com.example', '', 'class ManagedDevice' },
-})
+}
+-- A supertype chain of 6 levels: `Deep0 : Deep1`, ..., `Deep5 : Deep6`.
+for level = 0, 6 do
+  local supertype = level < 6 and (' : Deep%d'):format(level + 1) or ''
+  local members = { [5] = '    val bar: Int', [6] = '    val foo: Int' }
+  plugin_files[('com/example/Deep%d.kt'):format(level)] = { 'package com.example', '', ('interface Deep%d%s {'):format(level, supertype), members[level] or '', '}' }
+end
+write_files(plugin_dir, plugin_files)
 
 -- Like the stdlib sources jar, the files are in a top folder that is not part of the package.
 local other_jar = work_dir .. '/other-sources.jar'
@@ -93,7 +119,14 @@ write_jar(other_jar, { ['src/main/kotlin/com/example/Other.kt'] = { 'package com
 
 local gradle_api_jar = work_dir .. '/gradle-api-sources.jar'
 write_jar(gradle_api_jar, {
-  ['org/gradle/api/Project.java'] = { 'package org.gradle.api;', '', 'public interface Project extends Comparable<Project> {', '}' },
+  ['org/gradle/api/Project.java'] = { 'package org.gradle.api;', '', 'public interface Project extends Comparable<Project> {', '    Project getRootProject();', '}' },
+  ['org/gradle/api/initialization/Settings.java'] = {
+    'package org.gradle.api.initialization;',
+    '',
+    'public interface Settings {',
+    '    ProjectDescriptor getRootProject();',
+    '}',
+  },
   ['org/gradle/internal/Project.java'] = { 'package org.gradle.internal;', '', 'public class Project {', '}' },
 })
 
@@ -121,7 +154,15 @@ local script_lines = {
   '',
   'android {',
   '    val device: ManagedDevice? = null',
+  '    namespace = "com.example.app"',
+  '    defaultConfig {',
+  '        compileSdk = 36',
+  '    }',
   '}',
+  '',
+  'unknownBlock { foo }',
+  'deep { foo }',
+  'deep { bar }',
   '',
   'dependencies {',
   '    implementation(libs.androidx.core.ktx)',
@@ -134,7 +175,12 @@ local script_lines = {
   'val remote: Remote? = null',
 }
 local script_path = root_dir .. '/build.gradle.kts'
-write_files(root_dir, { ['build.gradle.kts'] = script_lines, ['other/build.gradle.kts'] = { 'val bar = foo()' } })
+local settings_path = root_dir .. '/settings.gradle.kts'
+write_files(root_dir, {
+  ['build.gradle.kts'] = script_lines,
+  ['settings.gradle.kts'] = { 'rootProject.name = "app"' },
+  ['other/build.gradle.kts'] = { 'val bar = foo()' },
+})
 
 local catalog_lines = {
   '[versions]',
@@ -156,6 +202,7 @@ vim.fn.writefile({
   vim.json.encode({
     lists = { source_path, { 'org.gradle.api.*', 'org.gradle.kotlin.dsl.*', 'java.io.File' } },
     scripts = {
+      [assert(vim.uv.fs_realpath(settings_path))] = { sourcePath = 0, implicitImports = 1, pluginClasses = {} },
       [assert(vim.uv.fs_realpath(script_path))] = {
         sourcePath = 0,
         implicitImports = 1,
@@ -267,6 +314,42 @@ assert_location(
   'accessor'
 )
 
+-- Review focus 2: braces in strings and comments.
+local lines = {
+  'android {',
+  '  // }',
+  '  val s = "}${"{"}"',
+  '  defaultConfig {',
+  '    compileSdk = 36',
+}
+assert(vim.deep_equal(lookup.enclosing_blocks(lines, { line = 4, character = 6 }), { 'android', 'defaultConfig' }))
+
+assert_equal(
+  lookup.enclosing_blocks({ '/* { */ tasks.register("a{") {', "  val c = '{'", '  val r = """}${x}"""', '  if (c) {', '    x', '  }', '  y' }, { line = 6, character = 2 }),
+  { 'register' },
+  'blocks after a call, a char, a raw string, and an if'
+)
+
+assert_location(
+  lookup.definition(params_at('compileSdk = 36', 'compileSdk'), root_dir),
+  folder_uri(plugin_dir, 'com/example/dsl/BaseDefaultConfig.kt'),
+  line_index_of(base_default_config_lines, 'compileSdk'),
+  'member of a supertype in a block from a member of a supertype'
+)
+
+assert_location(
+  lookup.definition(params_at('namespace = ', 'namespace'), root_dir),
+  folder_uri(plugin_dir, 'com/example/ApplicationExtension.kt'),
+  line_index_of(application_extension_lines, 'namespace'),
+  'member of the block receiver'
+)
+
+local foo_accessor_uri = folder_uri(accessors_dir, 'org/gradle/kotlin/dsl/Accessors1.kt')
+local foo_accessor_line_index = 19
+assert_location(lookup.definition(params_at('unknownBlock { foo }', 'foo'), root_dir), foo_accessor_uri, foo_accessor_line_index, 'name in a block with no type')
+assert_location(lookup.definition(params_at('deep { foo }', 'foo'), root_dir), foo_accessor_uri, foo_accessor_line_index, 'member after 6 supertype levels')
+assert_location(lookup.definition(params_at('deep { bar }', 'bar'), root_dir), folder_uri(plugin_dir, 'com/example/Deep5.kt'), 3, 'member after 5 supertype levels')
+
 assert_equal(other_library_names, {}, 'workspace/symbol queries before the cases that need the server')
 
 -- Review focus 4: a catalog from another file, then no catalog file.
@@ -278,6 +361,19 @@ assert_location(lookup.definition(params_at('libs.foo', 'foo'), root_dir), gette
 -- A plugin class of `build-logic` is not in the source path.
 assert_equal(lookup.definition(params_at('id("com.example.convention")', 'convention'), root_dir), { other_library_location }, 'plugin id in build-logic')
 assert_equal(other_library_names, { { 'ConventionPlugin' } }, 'workspace/symbol queries for a plugin in build-logic')
+
+-- An import of a class that is not in the source path.
+assert_equal(lookup.definition(params_at('val remote: Remote', 'Remote'), root_dir), { other_library_location }, 'import from another library')
+assert_equal(other_library_names, { { 'ConventionPlugin' }, { 'com.other.Remote' } }, 'workspace/symbol queries for an import from another library')
+
+-- The first receiver of a settings script is `Settings`. `Project` has the same getter.
+vim.cmd.edit(vim.fn.fnameescape(settings_path))
+assert_location(
+  lookup.definition({ textDocument = { uri = vim.uri_from_bufnr(0) }, position = { line = 0, character = 0 } }, root_dir),
+  jar_uri(gradle_api_jar, 'org/gradle/api/initialization/Settings.java'),
+  3,
+  'getter of the settings receiver'
+)
 
 -- A script that is not in the model, for example a new file.
 other_library_names = {}
