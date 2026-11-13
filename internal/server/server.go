@@ -131,7 +131,8 @@ func start(root, cacheDir string, env []string) (net.Conn, error) {
 		return nil, fmt.Errorf("remove old port file %s: %w", portPath, err)
 	}
 	logPath := filepath.Join(cacheDir, "server.log")
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	// Each server starts with an empty log, because the import log grows to gigabytes.
+	logFile, err := os.OpenFile(logPath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open server log %s: %w", logPath, err)
 	}

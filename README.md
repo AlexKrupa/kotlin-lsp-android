@@ -204,7 +204,7 @@ Files in `<cache root>/<key>/`:
 | `watch.log` | Log of the watch process |
 | `port` | TCP port of the server |
 | `pid` | Process ID of the server |
-| `server.log` | Log of the server |
+| `server.log` | Log of the server. Each server start empties it. |
 | `variant` | The variant that `variant set` saved |
 | `variants.json` | The variants of each module |
 | `missing-sources.json` | The SDK and Gradle sources that the background download must fetch |

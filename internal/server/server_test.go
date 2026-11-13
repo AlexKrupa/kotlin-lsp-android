@@ -103,6 +103,20 @@ func TestEnsureReusesRunningServer(t *testing.T) {
 	}
 }
 
+func TestEnsureStartsServerWithEmptyLog(t *testing.T) {
+	cacheDir := newCacheDir(t)
+	logPath := filepath.Join(cacheDir, "server.log")
+	if err := os.WriteFile(logPath, []byte("line of the previous server\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ensure(t, cacheDir)
+
+	if content := readFile(t, logPath); strings.Contains(content, "previous server") {
+		t.Fatalf("server.log = %q, want no lines of the previous server", content)
+	}
+}
+
 func TestEnsureStartsOneServerForConcurrentClients(t *testing.T) {
 	cacheDir := newCacheDir(t)
 	var wait sync.WaitGroup
