@@ -30,6 +30,25 @@ function M.setup(opts)
   require('kotlin_lsp_android.script_model').setup(executable)
 end
 
+-- The outermost settings folder of the git repo, so that an included build shares the server of the
+-- build that includes it.
+---@param path string
+---@return string?
+local function settings_root(path)
+  local nearest, outermost
+  for dir in vim.fs.parents(path) do
+    if vim.uv.fs_stat(dir .. '/settings.gradle.kts') or vim.uv.fs_stat(dir .. '/settings.gradle') then
+      nearest = nearest or dir
+      outermost = dir
+    end
+    if vim.uv.fs_stat(dir .. '/.git') then
+      return outermost
+    end
+  end
+  -- Outside a git repo, an outer settings file can belong to another build.
+  return nearest
+end
+
 ---@param bufnr integer
 ---@param on_dir fun(root_dir: string)
 function M.root_dir(bufnr, on_dir)
@@ -48,9 +67,8 @@ function M.root_dir(bufnr, on_dir)
   if vim.bo[bufnr].filetype == 'java' then
     return
   end
-  -- Each marker searches all parents before the next, so a module `build.gradle.kts` does not win
-  -- over the repo `settings.gradle.kts`. The `kotlin-lsp` binary uses the same order.
-  local root_dir = vim.fs.root(bufnr, { 'settings.gradle.kts', 'settings.gradle', 'build.gradle.kts', 'build.gradle' })
+  -- The `kotlin-lsp` binary uses the same rules.
+  local root_dir = settings_root(name) or vim.fs.root(bufnr, { 'build.gradle.kts', 'build.gradle' })
   if root_dir then
     on_dir(root_dir)
   end

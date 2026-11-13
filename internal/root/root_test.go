@@ -51,6 +51,43 @@ func TestFindFallsBackToBuildFile(t *testing.T) {
 	}
 }
 
+func TestFindPrefersOutermostSettingsInGitRepo(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "repo", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(base, "settings.gradle.kts"))
+	touch(t, filepath.Join(base, "repo", "settings.gradle.kts"))
+	touch(t, filepath.Join(base, "repo", "build-logic", "settings.gradle.kts"))
+	touch(t, filepath.Join(base, "repo", "build-logic", "convention", "src", "Plugin.kt"))
+
+	found, err := Find(filepath.Join(base, "repo", "build-logic", "convention", "src"))
+
+	if err != nil {
+		t.Fatalf("Find returned error: %v", err)
+	}
+	if want := filepath.Join(base, "repo"); found != want {
+		t.Fatalf("root = %q, want %q", found, want)
+	}
+}
+
+func TestFindPrefersOutermostSettingsInGitWorktree(t *testing.T) {
+	base := t.TempDir()
+	// A linked worktree has a `.git` file, not a folder.
+	touch(t, filepath.Join(base, "worktree", ".git"))
+	touch(t, filepath.Join(base, "worktree", "settings.gradle"))
+	touch(t, filepath.Join(base, "worktree", "build-logic", "settings.gradle"))
+
+	found, err := Find(filepath.Join(base, "worktree", "build-logic"))
+
+	if err != nil {
+		t.Fatalf("Find returned error: %v", err)
+	}
+	if want := filepath.Join(base, "worktree"); found != want {
+		t.Fatalf("root = %q, want %q", found, want)
+	}
+}
+
 func TestFindFailsWithNoMarker(t *testing.T) {
 	base := t.TempDir()
 

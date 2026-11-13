@@ -59,9 +59,15 @@ it with no change.
 
 `cmd` starts `kotlin-lsp --stdio` in the root directory of the client. Without `executable`, it
 takes `kotlin-lsp` from the PATH of Neovim, which can be the Homebrew server. `:AndroidVariant` uses
-the same executable. `root_dir` finds the Gradle
-root of a buffer. For a library file (a `jar:` buffer, or an Android SDK or Gradle source file), it
-uses the root of the last Kotlin buffer.
+the same executable. `root_dir` finds the Gradle root of a buffer. For a library file (a `jar:`
+buffer, or an Android SDK or Gradle source file), it uses the root of the last Kotlin buffer.
+
+The binary and `root_dir` find the root with the same rules:
+
+1. In a git repo or worktree, the root is the outermost folder with `settings.gradle(.kts)`. Thus an
+   included build, for example `build-logic`, uses the server of the build that includes it.
+2. Outside a git repo, the root is the nearest folder with `settings.gradle(.kts)`.
+3. With no settings file, the root is the nearest folder with `build.gradle(.kts)`.
 
 On the first start of a root, the binary runs Gradle before the server starts. `cmd` shows the
 progress "Starting kotlin-lsp" (`$/progress`) until the response to `initialize`. If the binary
@@ -235,6 +241,7 @@ Lua tests, with no user config:
 ```sh
 nvim --clean --headless -l tests/jar_spec.lua
 nvim --clean --headless -l tests/retry_spec.lua
+nvim --clean --headless -l tests/root_spec.lua
 nvim --clean --headless -l tests/script_lookup_spec.lua
 nvim --clean --headless -l tests/script_model_spec.lua
 nvim --clean --headless -l tests/sources_spec.lua
