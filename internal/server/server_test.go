@@ -179,7 +179,7 @@ func TestEnsureFailsAfterTimeout(t *testing.T) {
 func TestStopEndsServer(t *testing.T) {
 	cacheDir := newCacheDir(t)
 	ensure(t, cacheDir).Close()
-	port := readFile(t, filepath.Join(cacheDir, "port"))
+	port, _, _ := strings.Cut(readFile(t, filepath.Join(cacheDir, "port")), "\n")
 
 	err := Stop(cacheDir)
 

@@ -195,7 +195,9 @@ func readPort(cacheDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(content)), nil
+	// Since build 271, the port is the first of several lines.
+	port, _, _ := strings.Cut(strings.TrimSpace(string(content)), "\n")
+	return port, nil
 }
 
 func dial(port string) (net.Conn, error) {

@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -46,7 +47,9 @@ func main() {
 		log.Fatal(err)
 	}
 	_, port, _ := net.SplitHostPort(listener.Addr().String())
-	if err := os.WriteFile(*portFile, []byte(port), 0o644); err != nil {
+	// The format of kotlin-lsp 271: the port, the process ID, and the build.
+	content := fmt.Sprintf("%s\n%d\nILS-271.2085.0\n", port, os.Getpid())
+	if err := os.WriteFile(*portFile, []byte(content), 0o644); err != nil {
 		log.Fatal(err)
 	}
 	for {
