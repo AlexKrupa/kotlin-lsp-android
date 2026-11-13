@@ -94,6 +94,16 @@ jumplist and the tagstack do not get the class file, so `<C-o>` and `<C-t>` go b
 of the jump. A class file location from outside the indexing gets no retry, because many libraries
 have no sources.
 
+## Idle stop
+
+The server of a root stops after 1 hour with no client. Each client start also starts the
+background process `kotlin-lsp watch <cache folder>`, one for each root. Each client holds a shared
+lock on the file `clients` until it exits. If the watch process can get an exclusive lock for 1
+hour, it stops the server. The next client starts a new server.
+
+In `nowinandroid`, a new start takes about 15 s until the server is ready. A server uses about
+1.5 GB of memory.
+
 ## Variants
 
 The binary reads the build variants from the first Gradle run of the init script: the separate run
@@ -189,6 +199,9 @@ Files in `<cache root>/<key>/`:
 | File | Content |
 | --- | --- |
 | `lock` | Lock that lets clients that start at the same time share one server |
+| `clients` | Lock that each client holds in shared mode, for the idle stop |
+| `watch.lock` | Lock that allows one watch process for each root |
+| `watch.log` | Log of the watch process |
 | `port` | TCP port of the server |
 | `pid` | Process ID of the server |
 | `server.log` | Log of the server |

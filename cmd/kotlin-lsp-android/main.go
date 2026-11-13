@@ -40,6 +40,9 @@ func run() error {
 	if len(os.Args) == 3 && os.Args[1] == "download" {
 		return download.Run(os.Args[2])
 	}
+	if len(os.Args) == 3 && os.Args[1] == "watch" {
+		return server.Watch(os.Args[2])
+	}
 	if len(os.Args) > 1 && os.Args[1] == "variant" {
 		rootPath, err := findRoot()
 		if err != nil {
@@ -96,6 +99,9 @@ func startServer() (net.Conn, []lsp.Project, error) {
 	conn, err := server.Ensure(rootPath, cacheDir, env, prepare)
 	if err != nil {
 		return nil, nil, err
+	}
+	if err := server.StartWatch(cacheDir); err != nil {
+		fmt.Fprintf(os.Stderr, "kotlin-lsp-android: idle stop: %v\n", err)
 	}
 	if err := download.Start(cacheDir); err != nil {
 		fmt.Fprintf(os.Stderr, "kotlin-lsp-android: download sources: %v\n", err)

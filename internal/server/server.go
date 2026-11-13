@@ -69,22 +69,59 @@ func Ensure(root, cacheDir string, env []string, prepare func()) (net.Conn, erro
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create cache folder %s: %w", cacheDir, err)
 	}
-	lockPath := filepath.Join(cacheDir, "lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	lock, err := lockStart(cacheDir)
 	if err != nil {
-		return nil, fmt.Errorf("open lock %s: %w", lockPath, err)
+		return nil, err
 	}
 	// Closing the file releases the lock.
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return nil, fmt.Errorf("lock %s: %w", lockPath, err)
-	}
 
-	if conn, err := connect(cacheDir); err == nil {
-		return conn, nil
+	conn, err := connect(cacheDir)
+	if err != nil {
+		prepare()
+		conn, err = start(root, cacheDir, env)
 	}
-	prepare()
-	return start(root, cacheDir, env)
+	if err != nil {
+		return nil, err
+	}
+	// Under the start lock, so that Watch cannot stop the server between the connect and this lock.
+	clients, err := lockClients(cacheDir, syscall.LOCK_SH)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return &clientConn{Conn: conn, clients: clients}, nil
+}
+
+// clientConn holds a shared lock on the clients file until it closes or the process ends, so that
+// Watch sees each connected client.
+type clientConn struct {
+	net.Conn
+	clients *os.File
+}
+
+func (conn *clientConn) Close() error {
+	return errors.Join(conn.Conn.Close(), conn.clients.Close())
+}
+
+func lockClients(cacheDir string, how int) (*os.File, error) {
+	return lockFile(filepath.Join(cacheDir, "clients"), how)
+}
+
+func lockFile(path string, how int) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open lock %s: %w", path, err)
+	}
+	if err := syscall.Flock(int(file.Fd()), how); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	return file, nil
+}
+
+func lockStart(cacheDir string) (*os.File, error) {
+	return lockFile(filepath.Join(cacheDir, "lock"), syscall.LOCK_EX)
 }
 
 func start(root, cacheDir string, env []string) (net.Conn, error) {
