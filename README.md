@@ -104,6 +104,29 @@ hour, it stops the server. The next client starts a new server.
 In `nowinandroid`, a new start takes about 15 s until the server is ready. A server uses about
 1.5 GB of memory.
 
+## Warm-up
+
+`kotlin-lsp warmup` starts the server of the root of the current folder and opens the project. It
+exits when the server sends `intellij/ready-for-test`, after the import and the indexing, or after
+30 minutes. It opens only roots with a cache folder, so a new clone gets no import. If the server
+of the root runs, it does nothing, because each new client starts a Gradle import. To start it at
+each `cd` and at the start of a fish shell, put this in `~/.config/fish/conf.d/`:
+
+```fish
+function __kotlin_lsp_warmup --on-variable PWD
+    set -l top (git rev-parse --show-toplevel 2>/dev/null); or return
+    test "$top" = "$__kotlin_lsp_warmup_top"; and return
+    set -g __kotlin_lsp_warmup_top $top
+    command kotlin-lsp warmup >/dev/null 2>&1 &
+    disown
+end
+__kotlin_lsp_warmup
+```
+
+In `nowinandroid`, the first definition result after a warm-up comes after 1.9 s, and without a
+warm-up after 4.7 s. Each new client starts a Gradle import again, also on a running server. During
+the import, the server answers from the model in its cache.
+
 ## Variants
 
 The binary reads the build variants from the first Gradle run of the init script: the separate run

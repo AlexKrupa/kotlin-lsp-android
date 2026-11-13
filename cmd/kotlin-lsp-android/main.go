@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/download"
@@ -19,10 +20,14 @@ import (
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/server"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/sources"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/variant"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/warmup"
 )
 
 // serverClosedExitCode tells the Neovim plugin to start the client again.
 const serverClosedExitCode = 3
+
+// The first import after a kotlin-lsp update builds the index again, which takes minutes.
+const warmupTimeout = 30 * time.Minute
 
 func main() {
 	err := run()
@@ -57,7 +62,14 @@ func run() error {
 		}
 		return scriptmodel.Run(rootPath, root.CacheDir(rootPath))
 	}
-	conn, projects, err := startServer()
+	if len(os.Args) == 2 && os.Args[1] == "warmup" {
+		return runWarmup()
+	}
+	rootPath, err := findRoot()
+	if err != nil {
+		return err
+	}
+	conn, projects, err := startServer(rootPath)
 	if err != nil {
 		// Without this message, an LSP client shows only the exit code.
 		if writeErr := lsp.WriteErrorMessage(os.Stdout, fmt.Sprintf("kotlin-lsp-android: %v", err)); writeErr != nil {
@@ -76,11 +88,24 @@ func findRoot() (string, error) {
 	return root.Find(dir)
 }
 
-func startServer() (net.Conn, []lsp.Project, error) {
+// A warm-up of a new clone or of a running server only adds a full Gradle import.
+func runWarmup() error {
 	rootPath, err := findRoot()
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
+	cacheDir := root.CacheDir(rootPath)
+	if _, err := os.Stat(cacheDir); err != nil || server.Runs(cacheDir) {
+		return nil
+	}
+	conn, projects, err := startServer(rootPath)
+	if err != nil {
+		return err
+	}
+	return warmup.Run(conn, rootPath, projects, warmupTimeout)
+}
+
+func startServer(rootPath string) (net.Conn, []lsp.Project, error) {
 	cacheDir := root.CacheDir(rootPath)
 	scriptPath, err := initscript.Write(cacheDir)
 	if err != nil {
