@@ -14,6 +14,7 @@ import (
 	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/download"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/lsp"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/properties"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/proxy"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/scriptmodel"
@@ -111,7 +112,15 @@ func startServer(rootPath string) (net.Conn, []lsp.Project, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	env := server.Env(cacheDir, scriptPath)
+	read, err := properties.Read(rootPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	var serverOptions []string
+	if read.Heap != "" {
+		serverOptions = append(serverOptions, "-Xmx"+read.Heap)
+	}
+	env := server.Env(cacheDir, scriptPath, serverOptions...)
 	prepare := func() {
 		if sources.Exists(cacheDir) {
 			return

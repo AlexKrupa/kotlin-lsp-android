@@ -260,6 +260,16 @@ func TestEnvSetsOptionsWithoutParentValues(t *testing.T) {
 	}
 }
 
+func TestEnvAddsServerOptions(t *testing.T) {
+	t.Setenv("IJ_JAVA_OPTIONS", "-Da=b")
+
+	env := Env(t.TempDir(), "/cache/script.gradle", "-Xmx6g")
+
+	if got, _ := envValue(env, "IJ_JAVA_OPTIONS"); got != "-Da=b -Dcom.jetbrains.ls.imports.gradle.init.scripts=/cache/script.gradle -Xmx6g" {
+		t.Fatalf("IJ_JAVA_OPTIONS = %q", got)
+	}
+}
+
 func TestEnvSetsPathsAndFlags(t *testing.T) {
 	cacheRoot := t.TempDir()
 	t.Setenv("KOTLIN_LSP_CACHE", cacheRoot)

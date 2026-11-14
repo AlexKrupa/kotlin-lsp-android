@@ -104,6 +104,23 @@ hour, it stops the server. The next client starts a new server.
 In `nowinandroid`, a new start takes about 15 s until the server is ready. A server uses about
 1.5 GB of memory.
 
+## Root properties
+
+To configure the server of a root, put the optional file `.kotlin-lsp.properties` in the root. Each
+line is `key=value`. A line that starts with `#` is a comment.
+
+```properties
+heap=6g
+```
+
+| Key | Value | Default |
+| --- | --- | --- |
+| `heap` | Maximum heap of the server, in the format of `-Xmx`, for example `6g` or `4096m`. The binary adds `-Xmx<heap>` to `IJ_JAVA_OPTIONS` of the server, not of Gradle. | 2 GB, from `-Xmx2048m` in the `intellij-server.vmoptions` file of Homebrew |
+
+The binary reads the file at each start of a server. Thus a change applies after the next idle stop
+or a stop of the server. If the file has an unknown key or an invalid value, the client does not
+start and shows the error. To use one file in all worktrees of a repo, link it into each worktree.
+
 ## Warm-up
 
 `kotlin-lsp warmup` starts the server of the root of the current folder and opens the project. It

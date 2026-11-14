@@ -27,15 +27,17 @@ const (
 // startTimeout is a variable so that tests can make it shorter.
 var startTimeout = 300 * time.Second
 
-func Env(cacheDir, scriptPath string) []string {
+// Env gives the environment of the server, with serverOptions as JVM options of the server, not of
+// Gradle.
+func Env(cacheDir, scriptPath string, serverOptions ...string) []string {
 	set := map[string]string{
 		"ORG_GRADLE_PROJECT_android.onlyEnableUnitTestForTheTestedBuildType": "false",
 		"KOTLIN_LSP_ANDROID_OUTPUT": cacheDir,
 		"KOTLIN_LSP_GRADLE_SOURCES": filepath.Join(root.CacheRoot(), "gradle-sources"),
-		"JAVA_TOOL_OPTIONS": appendOption(os.Getenv("JAVA_TOOL_OPTIONS"),
+		"JAVA_TOOL_OPTIONS": appendOptions(os.Getenv("JAVA_TOOL_OPTIONS"),
 			"-Dorg.gradle.isolated-projects=false"),
-		"IJ_JAVA_OPTIONS": appendOption(os.Getenv("IJ_JAVA_OPTIONS"),
-			"-Dcom.jetbrains.ls.imports.gradle.init.scripts="+scriptPath),
+		"IJ_JAVA_OPTIONS": appendOptions(os.Getenv("IJ_JAVA_OPTIONS"),
+			append([]string{"-Dcom.jetbrains.ls.imports.gradle.init.scripts=" + scriptPath}, serverOptions...)...),
 	}
 	// The variant file is the only source: an inherited value must not stay.
 	content, err := os.ReadFile(filepath.Join(cacheDir, "variant"))
@@ -57,11 +59,11 @@ func Env(cacheDir, scriptPath string) []string {
 	return env
 }
 
-func appendOption(inherited, option string) string {
+func appendOptions(inherited string, options ...string) string {
 	if inherited == "" {
-		return option
+		return strings.Join(options, " ")
 	}
-	return inherited + " " + option
+	return strings.Join(append([]string{inherited}, options...), " ")
 }
 
 // The lock of Ensure makes clients that start at the same time share one server and one prepare.
