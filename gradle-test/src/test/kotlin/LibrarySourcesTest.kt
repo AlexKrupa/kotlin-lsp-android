@@ -175,6 +175,19 @@ class LibrarySourcesTest : FixtureBuildTest() {
     }
 
     @Test
+    fun buildsRClassJarOfSelectedVariant() {
+        val projectDir = copyFixture("android")
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir, listOf("lspRClassJars", "-Plsp.android.variant=prodDebug"))
+
+        val rClassJars = File(projectDir, "app/build/intermediates/compile_and_runtime_r_class_jar")
+        val rClassJar = File(rClassJars, "prodDebug/processProdDebugResources/R.jar")
+        assertTrue("com/example/app/R\$string.class" in jarEntryNames(rClassJar.path), jarEntryNames(rClassJar.path).toString())
+        assertEquals(listOf("prodDebug"), rClassJars.list()?.toList())
+    }
+
+    @Test
     fun librariesUseImportJarPaths() {
         val projectDir = copyFixture("android")
         val outputDir = File(tempDir, "out")

@@ -454,7 +454,8 @@ void registerModuleTask(Project project, Action<LspLibrarySourcesModuleTask> con
     }
 }
 
-void registerAndroidModuleTask(Project project) {
+// Returns the selected variant, or no value for a module with no variants.
+Provider<String> registerAndroidModuleTask(Project project) {
     def variants = new LinkedHashMap<String, List<Configuration>>()
     def androidComponents = project.extensions.getByName('androidComponents')
     androidComponents.onVariants(androidComponents.selector().all(), { variant ->
@@ -467,10 +468,10 @@ void registerAndroidModuleTask(Project project) {
     def requested = project.providers.gradleProperty('lsp.android.variant')
         .orElse(project.providers.systemProperty('lsp.android.variant'))
         .orElse(project.providers.environmentVariable('LSP_ANDROID_VARIANT'))
+    def selectedVariant = project.provider { LspVariants.select(variants.keySet().toList(), requested.getOrNull()) }
     registerModuleTask(project) { task ->
-        def names = variants.keySet().toList()
-        def selected = LspVariants.select(names, requested.getOrNull())
-        task.variants.set(names)
+        def selected = selectedVariant.getOrNull()
+        task.variants.set(variants.keySet().toList())
         task.selectedVariant.set(selected)
         variants.getOrDefault(selected, []).each { configuration ->
             def classpath = configuration.incoming.artifactView { view ->
@@ -505,6 +506,18 @@ void registerAndroidModuleTask(Project project) {
         }
         task.sdks.set(project.provider { sdkRoots(project, androidComponents) })
     }
+    return selectedVariant
+}
+
+// The import of kotlin-lsp puts the R jar of the `process<Variant>Resources` task of an app on the
+// classpath, but does not build it. The filter by name does not create the other tasks.
+void addRClassJar(Project project, Provider<String> selectedVariant) {
+    project.rootProject.tasks.named('lspRClassJars') {
+        it.dependsOn({
+            def name = selectedVariant.map { "process${it.capitalize()}Resources".toString() }.getOrElse('')
+            project.tasks.named({ it == name } as Spec<String>)
+        })
+    }
 }
 
 // A missing SDK platform makes the AGP providers fail. The import must not fail, so the libraries
@@ -538,6 +551,9 @@ void registerJvmModuleTask(Project project) {
 }
 
 gradle.rootProject { root ->
+    // Only the separate run starts it, after `lspLibrarySources`: a missing library fails its task
+    // graph, and the import must not fail.
+    root.tasks.register('lspRClassJars')
     root.tasks.register('lspLibrarySources', LspLibrarySourcesTask) { task ->
         try {
             task.buildPath.set(root.buildTreePath)
@@ -576,7 +592,10 @@ gradle.allprojects { project ->
     ['com.android.application', 'com.android.library'].each { pluginId ->
         project.pluginManager.withPlugin(pluginId) {
             try {
-                registerAndroidModuleTask(project)
+                def selectedVariant = registerAndroidModuleTask(project)
+                if (pluginId == 'com.android.application') {
+                    addRClassJar(project, selectedVariant)
+                }
             } catch (Throwable e) {
                 project.logger.warn("kotlin-lsp-android: cannot add the libraries of ${project.buildTreePath}", e)
             }

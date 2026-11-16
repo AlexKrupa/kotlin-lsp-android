@@ -79,6 +79,18 @@ Like Android Studio, the Gradle import of the server creates no tasks. The binar
 it, the import fails on AGP tasks that fail at creation, for example the Compose Preview task of a
 module with no unit tests.
 
+The import of kotlin-lsp puts the R jar of each app module on the classpath, but does not build
+it. The server reads the jar only at its start. Thus the binary builds the jars before the first
+start of a root.
+
+After `lspLibrarySources`, the binary runs `lspRClassJars` of the init script in a separate Gradle
+run. This task runs `process<Variant>Resources` for the selected variant of each app module of the
+root build. In `nowinandroid`, with the library modules below, it runs 384 tasks of 32 modules and
+compiles only the build logic. With a warm Gradle daemon and no changes, it takes about 2 s.
+
+A missing library fails the task graph of `lspRClassJars`. Thus the import does not run it, and the
+separate run ignores its failure. Then the server starts with no R jar.
+
 `cmd` also has workarounds for library locations. They use only the sources in `workspace.json`:
 
 - Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for
@@ -179,7 +191,7 @@ at the first start, or the server import. Until that run ends, `variant list` fa
 | `:AndroidVariant <name>` | Sets the variant. Completion lists the variants. |
 | `:AndroidVariant` | Shows a picker (`vim.ui.select`) with the variants. |
 | `kotlin-lsp variant list` | Prints the variants of the project in the current directory. |
-| `kotlin-lsp variant set <name>` | Rejects an unknown name. Saves the variant, runs the Gradle run for the sources, and stops the server. |
+| `kotlin-lsp variant set <name>` | Rejects an unknown name. Saves the variant, runs the Gradle runs for the sources and the R jars, and stops the server. |
 
 The command works in the root of the `kotlin_lsp` client of the current buffer. If the buffer has
 no client, it uses the root of the last Kotlin buffer.
@@ -306,6 +318,9 @@ Files in `<cache root>/`, shared by all roots:
   each source file. A next lookup takes less than 0.1 s. The references do one lookup for each match
   of the name, for example 1.8 s for the 31 matches of `namespace`.
 - No `R` class in library modules (kotlin-lsp issue #280).
+- After a `clean` or a new resource, the `R` class changes only after a Gradle build of the app
+  and the next server start. An import that changes the jar has no effect, because the server
+  reads it only at its start.
 - No fixes or patches for `kotlin-lsp`: the repo only works around it.
 
 ## Tests

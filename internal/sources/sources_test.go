@@ -67,7 +67,7 @@ func TestPrepareRunsGradlewWithScriptAndEnv(t *testing.T) {
 	root := t.TempDir()
 	scriptPath := filepath.Join(t.TempDir(), "script.gradle")
 	report := filepath.Join(root, "report")
-	fakeGradlew(t, root, `echo "$PWD|$*|$SOME_VARIABLE" > `+report)
+	fakeGradlew(t, root, `echo "$PWD|$*|$SOME_VARIABLE" >> `+report)
 
 	if err := Prepare(root, scriptPath, append(os.Environ(), "SOME_VARIABLE=value")); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,8 @@ func TestPrepareRunsGradlewWithScriptAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolvedRoot, _ := filepath.EvalSymlinks(root)
-	want := resolvedRoot + "|-q -I " + scriptPath + " lspLibrarySources|value\n"
+	want := resolvedRoot + "|-q -I " + scriptPath + " lspLibrarySources|value\n" +
+		resolvedRoot + "|-q -I " + scriptPath + " lspRClassJars --continue|value\n"
 	if string(content) != want {
 		t.Fatalf("gradlew call = %q, want %q", content, want)
 	}
@@ -102,6 +103,22 @@ func TestPrepareReportsFailedGradlew(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), root) {
 		t.Fatalf("error = %v, want an error that names %s", err, root)
+	}
+}
+
+func TestPrepareIgnoresFailedRClassJarsAfterLibrarySources(t *testing.T) {
+	root := t.TempDir()
+	report := filepath.Join(root, "report")
+	fakeGradlew(t, root, `echo "$4" >> `+report+`; [ "$4" = lspLibrarySources ]`)
+
+	err := Prepare(root, filepath.Join(t.TempDir(), "script.gradle"), os.Environ())
+
+	content, _ := os.ReadFile(report)
+	if string(content) != "lspLibrarySources\nlspRClassJars\n" {
+		t.Fatalf("gradlew tasks = %q, want lspLibrarySources, then lspRClassJars", content)
+	}
+	if err != nil {
+		t.Fatalf("error = %v, want none", err)
 	}
 }
 
