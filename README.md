@@ -2,7 +2,7 @@
 
 `kotlin-lsp-android` helps Kotlin and Android projects in Neovim. A jump from project code into an
 Android library, the Android SDK, or the Gradle API opens the source file, not a `.class` stub. Go
-to definition, hover, and references also work in `.gradle.kts` files. The user can select the
+to definition, hover, and references also work in `.gradle.kts` files. You can select the
 Android build variant.
 
 The repo has two parts:
@@ -14,6 +14,8 @@ The repo has two parts:
 
 The binary is installed on PATH as `kotlin-lsp`. Neovim, Claude Code, and other LSP clients start
 it with no change.
+
+The repo only works around kotlin-lsp. It does not fix or patch it.
 
 ## Requirements
 
@@ -28,16 +30,14 @@ it with no change.
 
 ## Install
 
-1. Build the binary under the name `kotlin-lsp`:
+1. Build the binary as `kotlin-lsp`, in a folder that is on PATH before `/opt/homebrew/bin`:
 
    ```sh
    go build -o ~/.local/wrappers/kotlin-lsp ./cmd/kotlin-lsp-android
    ```
 
-2. Put `~/.local/wrappers` on PATH before `/opt/homebrew/bin`. Then `kotlin-lsp` is this binary,
-   not the Homebrew server.
-
-3. Add the plugin with lazy.nvim:
+2. Add the plugin with lazy.nvim. Set `executable` to the binary of step 1. Without it, the plugin
+   takes `kotlin-lsp` from the PATH of Neovim, which can be the Homebrew server.
 
    ```lua
    {
@@ -48,7 +48,7 @@ it with no change.
    }
    ```
 
-4. Use the plugin in the `kotlin_lsp` client config:
+3. Use the plugin in the `kotlin_lsp` client configuration:
 
    ```lua
    vim.lsp.config('kotlin_lsp', {
@@ -57,125 +57,25 @@ it with no change.
    })
    ```
 
-`cmd` starts `kotlin-lsp --stdio` in the root directory of the client. Without `executable`, it
-takes `kotlin-lsp` from the PATH of Neovim, which can be the Homebrew server. `:AndroidVariant` uses
-the same executable. `root_dir` finds the Gradle root of a buffer. For a library file (a `jar:`
-buffer, or an Android SDK or Gradle source file), it uses the root of the last Kotlin buffer.
+## Usage
 
-The binary and `root_dir` find the root with the same rules:
+### Variants
 
-1. In a git repo or worktree, the root is the outermost folder with `settings.gradle(.kts)`. Thus an
-   included build, for example `build-logic`, uses the server of the build that includes it.
-2. Outside a git repo, the root is the nearest folder with `settings.gradle(.kts)`.
-3. With no settings file, the root is the nearest folder with `build.gradle(.kts)`.
+| Command | Effect |
+| --- | --- |
+| `:AndroidVariant <name>` | Sets the variant. Completion lists the variants. |
+| `:AndroidVariant` | Shows a picker (`vim.ui.select`) with the variants. |
+| `kotlin-lsp variant list` | Prints the variants of the project in the current directory. |
+| `kotlin-lsp variant set <name>` | Saves the variant, runs Gradle for the library sources and the `R` jars, and stops the server. |
 
-On the first start of a root, the binary runs Gradle before the server starts. `cmd` shows the
-progress "Starting kotlin-lsp" (`$/progress`) until the response to `initialize`. If the binary
-cannot start the server, it sends the error as `window/showMessage` and exits. Neovim shows the
-error with `vim.notify`.
+`:AndroidVariant` works in the root of the current buffer. `variant list` fails until the first
+Gradle run of the root ends. After `set`, the `kotlin_lsp` clients in Neovim reconnect to a new
+server with the same buffers. Other LSP clients lose the connection.
 
-Like Android Studio, the Gradle import of the server creates no tasks. The binary sets
-`-Dorg.gradle.internal.GradleProjectBuilderOptions=omit_all_tasks` in `JAVA_TOOL_OPTIONS`. Without
-it, the import fails on AGP tasks that fail at creation, for example the Compose Preview task of a
-module with no unit tests.
+### Warm-up
 
-The import of kotlin-lsp puts the R jar of each app module on the classpath, but does not build
-it. The server reads the jar only at its start. Thus the binary builds the jars before the first
-start of a root.
-
-After `lspLibrarySources`, the binary runs `lspRClassJars` of the init script in a separate Gradle
-run. This task runs `process<Variant>Resources` for the selected variant of each app module of the
-root build. In `nowinandroid`, with the library modules below, it runs 384 tasks of 32 modules and
-compiles only the build logic. With a warm Gradle daemon and no changes, it takes about 2 s.
-
-A missing library fails the task graph of `lspRClassJars`. Thus the import does not run it, and the
-separate run ignores its failure. Then the server starts with no R jar.
-
-The import of kotlin-lsp puts no R jar of a library module on the classpath. See kotlin-lsp issue
-[#280](https://github.com/Kotlin/kotlin-lsp/issues/280). Thus `lspRClassJars` also runs
-`generate<Variant>RFile` for the selected variant of each library module. It copies the jar to
-`<cache>/r-jars/<project path>/R.jar`. A jar in the build folder fails the import: Gradle finds the
-output of a task that no task in the import depends on.
-
-The init script adds the copied jars to `<variant>CompileOnly` of each Android module, and to the
-`CompileOnly` configurations of its unit tests and instrumented tests. A module gets the same R
-classes as on its Gradle compile classpath: its own jar, the jars of its direct project
-dependencies, and then only the jars of their `api` dependencies.
-
-`cmd` also has workarounds for library locations. They use only the sources in `workspace.json`:
-
-- Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for
-  its jar. An example is the Kotlin stdlib of the Gradle distribution in build logic. Then `cmd`
-  moves the location to the declaration in those sources. For overloads, it compares the signature
-  in the decompiled class file.
-- The server finds nothing for a jump from a library source file. Then `cmd` searches the name: in
-  the imports, the file, the package, and the library. A name from another library goes to the
-  server as a full name.
-
-They extract a sources jar to the Neovim cache folder.
-
-During the import and the indexing, kotlin-lsp can also locate a symbol in a class file. A later
-jump gives the source. Then `cmd` opens the class file and shows a message. When the work done
-progress (`$/progress`) of the client ends, `cmd` sends the request again. If the new result is a
-source file and the class file is still the current buffer, `cmd` moves the cursor there. The
-jumplist and the tagstack do not get the class file, so `<C-o>` and `<C-t>` go back to the start
-of the jump. A class file location from outside the indexing gets no retry, because many libraries
-have no sources.
-
-## Idle stop
-
-The server of a root stops after 1 hour with no client. Each client start also starts the
-background process `kotlin-lsp watch <cache folder>`, one for each root. Each client holds a shared
-lock on the file `clients` until it exits. If the watch process can get an exclusive lock for 1
-hour, it stops the server. The next client starts a new server.
-
-kotlin-lsp deletes its Gradle init scripts after each import. If the init script is missing, the
-watch process writes it again. Thus the next import of the server also gets the library sources.
-
-In `nowinandroid`, a new start takes about 15 s until the server is ready. A server uses about
-1.5 GB of memory.
-
-## Import after a failure
-
-After a failed Gradle import, kotlin-lsp does not watch the build scripts. It imports again only
-for the first client of the root, for example after `:LspRestart`. Thus the binary starts the next
-import itself:
-
-1. kotlin-lsp sends the error "Unable to import a Gradle project" to the client. The binary reads
-   it.
-2. Every 3 s, the binary reads the HEAD and the changed files of the git working tree of the root.
-3. If the working tree changes and then stays the same for 3 s, the binary changes the modification
-   time of `library-sources/workspace.json`.
-4. kotlin-lsp watches that file and imports the whole workspace again.
-
-If the import fails again, the binary waits for the next change. A change of a source file also
-starts an import, because a failed task, for example of KSP, can come from a source file. A root
-outside git, or a root with no `workspace.json`, gets no automatic import.
-
-## Root properties
-
-To configure the server of a root, put the optional file `.kotlin-lsp.properties` in the root. Each
-line is `key=value`. A line that starts with `#` is a comment.
-
-```properties
-heap=6g
-```
-
-| Key | Value | Default |
-| --- | --- | --- |
-| `heap` | Maximum heap of the server, in the format of `-Xmx`, for example `6g` or `4096m`. The binary adds `-Xmx<heap>` to `IJ_JAVA_OPTIONS` of the server, not of Gradle. | 2 GB, from `-Xmx2048m` in the `intellij-server.vmoptions` file of Homebrew |
-
-The binary reads the file at each start of a server. Thus a change applies after the next idle stop
-or a stop of the server. If the file has an unknown key or an invalid value, the client does not
-start and shows the error. To use one file in all worktrees of a repo, link it into each worktree.
-
-## Warm-up
-
-`kotlin-lsp warmup` starts the server of the root of the current folder and opens the project. It
-exits when the server sends `intellij/ready-for-test`, after the import and the indexing, or after
-30 minutes. It opens only roots with a cache folder, so a new clone gets no import. If the server
-of the root runs, it does nothing, because each new client starts a Gradle import. To start it at
-each `cd` and at the start of a fish shell, put this in `~/.config/fish/conf.d/`:
+`kotlin-lsp warmup` starts the server of the root of the current folder and waits for the import and
+the indexing. To run it at each `cd` in fish, put this in `~/.config/fish/conf.d/`:
 
 ```fish
 function __kotlin_lsp_warmup --on-variable PWD
@@ -188,153 +88,67 @@ end
 __kotlin_lsp_warmup
 ```
 
-In `nowinandroid`, the first definition result after a warm-up comes after 1.9 s, and without a
-warm-up after 4.7 s. Each new client starts a Gradle import again, also on a running server. During
-the import, the server answers from the model in its cache.
+The command does nothing for a new clone, which has no cache folder, or for a root with a
+running server.
 
-## Variants
+### Root properties
 
-The binary reads the build variants from the first Gradle run of the init script: the separate run
-at the first start, or the server import. Until that run ends, `variant list` fails.
+To configure the server of a root, put the optional file `.kotlin-lsp.properties` in the root. Each
+line is `key=value`. A line that starts with `#` is a comment.
 
-| Command | Effect |
-| --- | --- |
-| `:AndroidVariant <name>` | Sets the variant. Completion lists the variants. |
-| `:AndroidVariant` | Shows a picker (`vim.ui.select`) with the variants. |
-| `kotlin-lsp variant list` | Prints the variants of the project in the current directory. |
-| `kotlin-lsp variant set <name>` | Rejects an unknown name. Saves the variant, runs the Gradle runs for the sources and the R jars, and stops the server. |
+```properties
+heap=6g
+```
 
-The command works in the root of the `kotlin_lsp` client of the current buffer. If the buffer has
-no client, it uses the root of the last Kotlin buffer.
-
-`cmd` also has workarounds for library locations. They use only the sources in `workspace.json`:
-
-- Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for
-  its jar. An example is the Kotlin stdlib of the Gradle distribution in build logic. Then `cmd`
-  moves the location to the declaration in those sources. For overloads, it compares the signature
-  in the decompiled class file.
-- The server finds nothing for a jump from a library source file. Then `cmd` searches the name: in
-  the imports, the file, the package, and the library. A name from another library goes to the
-  server as a full name.
-
-They extract a sources jar to the Neovim cache folder.
-
-After `set`, all Neovim instances of the root reconnect to a new server. The plugin shows this
-message first. When the server stops, each proxy exits with code 3. Then `cmd` starts the
-`kotlin_lsp` client again, with the same buffers. Other LSP clients lose the connection. After 3
-restarts of a root in 10 minutes, `cmd` does not start the client again, and Neovim shows a warning
-for exit code 3. If the server crashes at each start, this limit stops a loop of Gradle imports.
-
-## Gradle scripts
-
-kotlin-lsp does not analyze `.gradle.kts` files (kotlin-lsp issue #55). For these files, `cmd`
-answers these requests with a name lookup in the plugin:
-
-- Go to definition, declaration, implementation, and type definition.
-- Hover. `cmd` sends the request to the server first. If the result is empty or an error, it shows
-  the declaration with its KDoc or Javadoc.
-- References. From a `.gradle.kts` file, `cmd` returns the uses in the `.gradle.kts` files of the
-  root. From a `.kt` file or a library file, it adds these uses to the server result. Above 200
-  matches of the name, it returns only the server result and shows a message.
-
-The lookup does not resolve types like a compiler. It uses the script model and the receiver types
-of the blocks around the cursor. The first step with a result gives the result:
-
-| Name at the cursor | Example | Result |
+| Key | Value | Default |
 | --- | --- | --- |
-| Plugin id, cursor in the string | `id("com.android.application")`, `kotlin("android")` | The plugin class. `workspace/symbol` finds a class of `build-logic`. An unknown id gives no result. |
-| Version catalog | `libs.androidx.core.ktx`, `alias(libs.plugins.ksp)` | The key in `gradle/libs.versions.toml` |
-| Import | `import com.android.build.api.dsl.ManagedVirtualDevice` | The imported declaration |
-| Name in a block | `compileSdk` in `android { defaultConfig { } }` | A member of the block receiver, then of the outer block receivers, also in the supertypes |
-| Implicit import | `Project`, `JavaVersion` | The type |
-| Accessor or Kotlin DSL | `android`, `implementation(...)` | The generated accessors and the Kotlin DSL API |
-| Other names | | `workspace/symbol`, up to 30 results |
+| `heap` | Maximum heap of the server, in the format of `-Xmx`, for example `6g` or `4096m`. The binary adds `-Xmx<heap>` to `IJ_JAVA_OPTIONS` of the server, not of Gradle. | 2 GB, from `-Xmx2048m` in the `intellij-server.vmoptions` file of Homebrew |
 
-The lookup extracts only the sources jars that have the package of the name, to the Neovim cache
-folder.
+The binary reads the file at each start of a server. A change applies after the next idle stop or a
+stop of the server. If the file has an unknown key or an invalid value, the client does not start
+and shows the error. To use one file in all worktrees of a repo, link it into each worktree.
 
-### Script model
+### Gradle scripts
 
-The script model comes from the Gradle Tooling API model `KotlinDslScriptsModel`. IntelliJ uses the
-same model. For each script, it has the source path, the implicit imports, and the plugin classes of
-the plugin ids. The source path includes the sources of the generated accessors.
-
-`kotlin-lsp script-model` writes the model of the project in the current directory to
-`library-sources/gradle-scripts.json`. It runs a Java client with the jars of the Gradle
-distribution of the build. Thus it needs `java` on PATH and no download. The import writes the path
-of the distribution to `library-sources/gradle-home.txt`. Without this file, the command fails. With
-a running Gradle daemon, a run takes about 1 s.
-
-The plugin runs `script-model` in the background:
-
-- When the work done progress (`$/progress`) of the client ends, for example after an import. If
-  a run is in progress, the plugin starts one more run after it.
-- If `gradle-scripts.json` is missing or is not valid JSON: on a request from a `.gradle.kts` file.
-  After a failed run, a request does not start a run. The next end of the work done progress does.
-
-Until the run ends, the lookup uses the current model file. If there is no valid model file, the
-lookup uses only `workspace/symbol`, up to 30 results. The same applies to a script with no entry in
-the model, for example a new file. If a run fails, for example because `java` is missing, Neovim
-shows one warning for each root, with the end of the error output.
-
-## Files
-
-The cache root is `$KOTLIN_LSP_CACHE`. The default is `~/.cache/kotlin-lsp`. Each Gradle root has
-the folder `<cache root>/<key>/`. The key is the first 12 hex characters of `sha256(root path)`.
-
-Files in `<cache root>/<key>/`:
-
-| File | Content |
-| --- | --- |
-| `lock` | Lock that lets clients that start at the same time share one server |
-| `clients` | Lock that each client holds in shared mode, for the idle stop |
-| `watch.lock` | Lock that allows one watch process for each root |
-| `watch.log` | Log of the watch process |
-| `port` | TCP port of the server |
-| `pid` | Process ID of the server |
-| `server.log` | Log of the server. Each server start empties it. |
-| `variant` | The variant that `variant set` saved |
-| `variants.json` | The variants of each module |
-| `missing-sources.json` | The SDK and Gradle sources that the background download must fetch |
-| `lsp-library-sources.gradle` | The init script that the binary writes at each start |
-| `ScriptModel.java` | The Tooling API client of `script-model`. If the content is different, a run writes it again. |
-| `script-model.lock` | Lock that allows one `script-model` run at a time. A second run waits. |
-| `r-jars/<project path>/R.jar` | Copies of the R jars of the library modules |
-| `library-sources/workspace.json` | The libraries with their sources, for the server |
-| `library-sources/gradle-home.txt` | The Gradle distribution of the build, for `script-model` |
-| `library-sources/gradle-scripts.json` | The script model: the source path, the implicit imports, and the plugin classes of each script |
-| `library-sources/fragments/` | The part of `workspace.json` of each Gradle build |
-| `library-sources/fragments/.lock` | Lock for the merge of the fragments |
-| `library-sources/empty/` | An empty content root for the module `lsp-library-sources` |
-| `library-sources/java-sources/` | Copies of the Java files of sources jars that have a top folder, for example `main/` |
-
-Files in `<cache root>/`, shared by all roots:
-
-| File | Content |
-| --- | --- |
-| `gradle-sources/` | Extracted `src/main` folders of the Gradle source distributions |
-| `download.log` | Log of the background downloads |
-| `download.lock` | Lock that allows one download at a time. A second download waits. |
+kotlin-lsp does not analyze `.gradle.kts` files (kotlin-lsp issue #55). In these files, the plugin
+answers go to definition, hover, and references with a name lookup. The lookup uses the Gradle
+script model, which the plugin writes with `kotlin-lsp script-model` after each import.
 
 ## Limits
 
-- One variant for the whole build. `kotlin-lsp` reads one variant name, so each module cannot have
-  a different variant.
+- One variant for the whole build. `kotlin-lsp` reads one variant name. Each module cannot have a
+  different variant.
 - In `.gradle.kts` files, the navigation is a name lookup, not a compiler resolution. A jump can
   give more than one declaration, for example all overloads. A name in a block with no known
-  receiver type goes to the steps after the block step.
+  receiver type goes to the implicit imports, the Kotlin DSL API, and `workspace/symbol`.
 - The references from `.gradle.kts` files contain only the uses that go to the same declaration. A
   use that goes to an override of the declaration is not in the list.
-- Neovim does not respond during a lookup in a `.gradle.kts` file. In nowinandroid, the first lookup
-  in a Neovim session takes about 1 s: it reads the package lists of the jars and the package of
-  each source file. A next lookup takes less than 0.1 s. The references do one lookup for each match
-  of the name, for example 1.8 s for the 31 matches of `namespace`.
+- Neovim does not respond during a lookup in a `.gradle.kts` file. In
+  [nowinandroid](https://github.com/android/nowinandroid), the first lookup in a Neovim session
+  takes about 1 s: it reads the package lists of the jars and the package of each source file. A
+  next lookup takes less than 0.1 s. The references do one lookup for each match of the name, for
+  example 1.8 s for the 31 matches of `namespace`.
 - After a `clean` or a new resource, the `R` class of an app changes only after a Gradle build of
   the app and the next server start. An import that changes the jar has no effect, because the
   server reads it only at its start.
-- The `R` class of a library changes only after the next separate run: `kotlin-lsp variant set`,
-  or the first start after you delete the cache folder of the root.
-- No fixes or patches for `kotlin-lsp`: the repo only works around it.
+- The `R` class of a library changes only after `kotlin-lsp variant set`, or after the first start
+  that follows a delete of the cache folder of the root.
+
+## Code
+
+| Folder | Content |
+| --- | --- |
+| `cmd/kotlin-lsp-android/` | Entry point and subcommands |
+| `internal/proxy/`, `internal/lsp/` | Message copy between a client and the server |
+| `internal/server/` | Start, shared use, and idle stop of the server of a root |
+| `internal/root/` | Gradle root of a folder |
+| `internal/sources/` | Gradle run before the first start of a root |
+| `internal/reimport/` | Import after a failed import |
+| `internal/variant/`, `internal/warmup/`, `internal/scriptmodel/`, `internal/download/`, `internal/properties/` | One subcommand or one file each |
+| `gradle/` | Init script and Tooling API client, embedded in the binary |
+| `lua/kotlin_lsp_android/` | Neovim plugin |
+
+[docs/architecture.md](docs/architecture.md) has the processes, the cache folder, and measurements.
 
 ## Tests
 
@@ -342,7 +156,7 @@ Go tests: `go test ./...`
 
 Init script tests, with `ANDROID_HOME` set: `cd gradle-test && ./gradlew test`
 
-Lua tests, with no user config:
+Lua tests, with no user configuration:
 
 ```sh
 nvim --clean --headless -l tests/jar_spec.lua
