@@ -45,7 +45,7 @@ func TestProxyRewritesInitializeAndCopiesBothWays(t *testing.T) {
 	fromProxy, clientOut := io.Pipe()
 	projects := []lsp.Project{{Type: "gradle", Path: "file:///project"}}
 	result := make(chan error, 1)
-	go func() { result <- Run(clientIn, clientOut, conn, projects) }()
+	go func() { result <- Run(clientIn, clientOut, conn, projects, make(chan struct{}, 1)) }()
 	replies := bufio.NewReader(fromProxy)
 
 	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`
@@ -96,7 +96,7 @@ func TestProxyReportsServerClose(t *testing.T) {
 	clientIn, toProxy := io.Pipe()
 	defer toProxy.Close()
 	result := make(chan error, 1)
-	go func() { result <- Run(clientIn, io.Discard, conn, nil) }()
+	go func() { result <- Run(clientIn, io.Discard, conn, nil, make(chan struct{}, 1)) }()
 
 	if err := server.Stop(cacheDir); err != nil {
 		t.Fatalf("Stop returned error: %v", err)
@@ -104,5 +104,41 @@ func TestProxyReportsServerClose(t *testing.T) {
 
 	if err := <-result; !errors.Is(err, ErrServerClosed) {
 		t.Fatalf("Run returned %v, want ErrServerClosed", err)
+	}
+}
+
+func TestProxySignalsFailedImportAndCopiesMessage(t *testing.T) {
+	cacheDir := t.TempDir()
+	conn, err := server.Ensure(os.TempDir(), cacheDir, os.Environ(), func() {})
+	if err != nil {
+		t.Fatalf("Ensure returned error: %v", err)
+	}
+	t.Cleanup(func() { server.Stop(cacheDir) })
+	clientIn, toProxy := io.Pipe()
+	fromProxy, clientOut := io.Pipe()
+	failures := make(chan struct{}, 1)
+	go Run(clientIn, clientOut, conn, nil, failures)
+	replies := bufio.NewReader(fromProxy)
+	if err := lsp.WriteMessage(toProxy, []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)); err != nil {
+		t.Fatalf("write initialize: %v", err)
+	}
+	if _, err := lsp.ReadMessage(replies); err != nil {
+		t.Fatalf("read initialize reply: %v", err)
+	}
+
+	// The fake server sends each client message back.
+	failure := `{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":1,"message":"Unable to import a Gradle project: failed"}}`
+	if err := lsp.WriteMessage(toProxy, []byte(failure)); err != nil {
+		t.Fatalf("write failure: %v", err)
+	}
+	reply, err := lsp.ReadMessage(replies)
+
+	if err != nil || string(reply) != failure {
+		t.Fatalf("client got %s, %v, want %s", reply, err, failure)
+	}
+	select {
+	case <-failures:
+	default:
+		t.Fatal("no failure signal after the import error message")
 	}
 }

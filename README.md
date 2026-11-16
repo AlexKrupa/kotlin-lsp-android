@@ -107,6 +107,23 @@ watch process writes it again. Thus the next import of the server also gets the 
 In `nowinandroid`, a new start takes about 15 s until the server is ready. A server uses about
 1.5 GB of memory.
 
+## Import after a failure
+
+After a failed Gradle import, kotlin-lsp does not watch the build scripts. It imports again only
+for the first client of the root, for example after `:LspRestart`. Thus the binary starts the next
+import itself:
+
+1. kotlin-lsp sends the error "Unable to import a Gradle project" to the client. The binary reads
+   it.
+2. Every 3 s, the binary reads the HEAD and the changed files of the git working tree of the root.
+3. If the working tree changes and then stays the same for 3 s, the binary changes the modification
+   time of `library-sources/workspace.json`.
+4. kotlin-lsp watches that file and imports the whole workspace again.
+
+If the import fails again, the binary waits for the next change. A change of a source file also
+starts an import, because a failed task, for example of KSP, can come from a source file. A root
+outside git, or a root with no `workspace.json`, gets no automatic import.
+
 ## Root properties
 
 To configure the server of a root, put the optional file `.kotlin-lsp.properties` in the root. Each

@@ -16,6 +16,7 @@ import (
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/lsp"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/properties"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/proxy"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/reimport"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/scriptmodel"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/server"
@@ -78,7 +79,9 @@ func run() error {
 		}
 		return err
 	}
-	return proxy.Run(os.Stdin, os.Stdout, conn, projects)
+	failures := make(chan struct{}, 1)
+	go reimport.Run(rootPath, sources.WorkspaceFile(root.CacheDir(rootPath)), failures)
+	return proxy.Run(os.Stdin, os.Stdout, conn, projects, failures)
 }
 
 func findRoot() (string, error) {

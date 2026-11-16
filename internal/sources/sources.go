@@ -11,8 +11,14 @@ import (
 )
 
 func Exists(cacheDir string) bool {
-	_, err := os.Stat(filepath.Join(cacheDir, "library-sources", "workspace.json"))
+	_, err := os.Stat(WorkspaceFile(cacheDir))
 	return err == nil
+}
+
+// WorkspaceFile is the file of the json project. kotlin-lsp imports the workspace again when it
+// changes.
+func WorkspaceFile(cacheDir string) string {
+	return filepath.Join(cacheDir, "library-sources", "workspace.json")
 }
 
 // Prepare runs the init script before the server starts, so that its first import finds the

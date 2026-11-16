@@ -34,3 +34,23 @@ func TestWriteErrorMessageWritesShowMessageNotification(t *testing.T) {
 		t.Fatalf("message = %s, want a window/showMessage error with %q", body, "no Gradle root")
 	}
 }
+
+func TestImportFailedFindsGradleImportError(t *testing.T) {
+	failure := `{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":1,"message":"Unable to import a Gradle project: org.gradle.tooling.BuildActionFailureException: The supplied phased action failed"}}`
+
+	if !ImportFailed([]byte(failure)) {
+		t.Fatalf("ImportFailed(%s) = false, want true", failure)
+	}
+}
+
+func TestImportFailedIgnoresOtherMessages(t *testing.T) {
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"Unable to import a Gradle project: info"}}`,
+		`{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":1,"message":"Log file: /cache/intellij-server.log"}}`,
+		`{"jsonrpc":"2.0","id":4,"result":{"contents":"Unable to import a Gradle project: "}}`,
+	} {
+		if ImportFailed([]byte(body)) {
+			t.Errorf("ImportFailed(%s) = true, want false", body)
+		}
+	}
+}

@@ -13,18 +13,36 @@ import (
 // ErrServerClosed means that the server closed the connection before the client.
 var ErrServerClosed = errors.New("the server closed the connection")
 
-func Run(clientIn io.Reader, clientOut io.Writer, conn net.Conn, projects []lsp.Project) error {
+// Run copies messages between the client and the server. After a failed Gradle import, it sends
+// to failures without a wait.
+func Run(clientIn io.Reader, clientOut io.Writer, conn net.Conn, projects []lsp.Project, failures chan<- struct{}) error {
 	defer conn.Close()
 	done := make(chan error, 2)
 	go func() { done <- copyToServer(clientIn, conn, projects) }()
-	go func() {
-		if _, err := io.Copy(clientOut, conn); err != nil {
-			done <- fmt.Errorf("copy server messages to client: %w", err)
-			return
-		}
-		done <- ErrServerClosed
-	}()
+	go func() { done <- copyToClient(conn, clientOut, failures) }()
 	return <-done
+}
+
+func copyToClient(conn net.Conn, clientOut io.Writer, failures chan<- struct{}) error {
+	reader := bufio.NewReader(conn)
+	for {
+		body, err := lsp.ReadMessage(reader)
+		if err == io.EOF {
+			return ErrServerClosed
+		}
+		if err != nil {
+			return fmt.Errorf("read server message: %w", err)
+		}
+		if lsp.ImportFailed(body) {
+			select {
+			case failures <- struct{}{}:
+			default:
+			}
+		}
+		if err := lsp.WriteMessage(clientOut, body); err != nil {
+			return fmt.Errorf("send server message to client: %w", err)
+		}
+	}
 }
 
 func copyToServer(clientIn io.Reader, conn net.Conn, projects []lsp.Project) error {
