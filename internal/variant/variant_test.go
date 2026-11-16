@@ -96,11 +96,12 @@ func startServer(t *testing.T, root, cacheDir string) string {
 			syscall.Kill(pid, syscall.SIGKILL)
 		}
 	})
-	port, err := os.ReadFile(filepath.Join(cacheDir, "port"))
+	content, err := os.ReadFile(filepath.Join(cacheDir, "port"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(port)
+	port, _, _ := strings.Cut(string(content), "\n")
+	return port
 }
 
 func assertPortClosed(t *testing.T, port string) {
