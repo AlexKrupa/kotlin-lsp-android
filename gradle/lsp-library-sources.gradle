@@ -28,7 +28,11 @@ class LspFiles {
         writeTextAtomically(target, JsonOutput.prettyPrint(JsonOutput.toJson(content)))
     }
 
+    // A new workspace.json makes the server import again, also with the same content.
     static void writeTextAtomically(File target, String text) {
+        if (target.isFile() && target.getText(StandardCharsets.UTF_8.name()) == text) {
+            return
+        }
         target.parentFile.mkdirs()
         def temp = File.createTempFile(target.name, '.tmp', target.parentFile)
         temp.setText(text, StandardCharsets.UTF_8.name())

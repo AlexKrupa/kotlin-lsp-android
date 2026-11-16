@@ -10,12 +10,17 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
 )
 
 // These are variables so that tests can make them shorter.
 var (
 	watchInterval = time.Minute
 	idleTimeout   = time.Hour
+	// kotlin-lsp deletes its init scripts after each import. The next import can start 0.5 s after a
+	// build script change.
+	restoreInterval = 200 * time.Millisecond
 )
 
 // StartWatch starts Watch in a background process that outlives the client.
@@ -40,8 +45,8 @@ func StartWatch(cacheDir string) error {
 	return child.Process.Release()
 }
 
-// Watch stops the server of cacheDir after idleTimeout with no client. If another Watch runs for
-// cacheDir, it returns at once.
+// Watch stops the server of cacheDir after idleTimeout with no client, and writes the init script
+// again when it is missing. If another Watch runs for cacheDir, it returns at once.
 func Watch(cacheDir string) error {
 	watchLock, err := lockFile(filepath.Join(cacheDir, "watch.lock"), syscall.LOCK_EX|syscall.LOCK_NB)
 	if errors.Is(err, syscall.EWOULDBLOCK) {
@@ -53,11 +58,21 @@ func Watch(cacheDir string) error {
 	defer watchLock.Close()
 
 	lastClientTime := time.Now()
+	idleCheck := time.NewTicker(watchInterval)
+	defer idleCheck.Stop()
+	restore := time.NewTicker(restoreInterval)
+	defer restore.Stop()
 	for {
-		time.Sleep(watchInterval)
-		stopped, err := stopIfIdle(cacheDir, &lastClientTime)
-		if stopped || err != nil {
-			return err
+		select {
+		case <-restore.C:
+			if _, err := initscript.Write(cacheDir); err != nil {
+				fmt.Fprintf(os.Stderr, "kotlin-lsp-android: restore init script: %v\n", err)
+			}
+		case <-idleCheck.C:
+			stopped, err := stopIfIdle(cacheDir, &lastClientTime)
+			if stopped || err != nil {
+				return err
+			}
 		}
 	}
 }

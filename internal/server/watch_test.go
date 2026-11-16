@@ -1,16 +1,19 @@
 package server
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
 )
 
 func shortWatch(t *testing.T) {
 	t.Helper()
-	defaultInterval, defaultIdle := watchInterval, idleTimeout
-	watchInterval, idleTimeout = 20*time.Millisecond, 200*time.Millisecond
-	t.Cleanup(func() { watchInterval, idleTimeout = defaultInterval, defaultIdle })
+	defaultInterval, defaultIdle, defaultRestore := watchInterval, idleTimeout, restoreInterval
+	watchInterval, idleTimeout, restoreInterval = 20*time.Millisecond, 200*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { watchInterval, idleTimeout, restoreInterval = defaultInterval, defaultIdle, defaultRestore })
 }
 
 func watch(cacheDir string) chan error {
@@ -97,6 +100,32 @@ func TestWatchExitsWhenAnotherWatcherRuns(t *testing.T) {
 
 	conn.Close()
 	waitDone(t, first, 5*time.Second)
+}
+
+func TestWatchRestoresDeletedInitScript(t *testing.T) {
+	shortWatch(t)
+	idleTimeout = time.Hour
+	cacheDir := newCacheDir(t)
+	conn := ensure(t, cacheDir)
+	scriptPath, err := initscript.Write(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := watch(cacheDir)
+
+	if err := os.Remove(scriptPath); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * restoreInterval)
+
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Fatalf("init script after the deletion: %v", err)
+	}
+	conn.Close()
+	if err := Stop(cacheDir); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+	waitDone(t, done, 5*time.Second)
 }
 
 func TestWatchExitsWhenServerStops(t *testing.T) {

@@ -101,6 +101,9 @@ background process `kotlin-lsp watch <cache folder>`, one for each root. Each cl
 lock on the file `clients` until it exits. If the watch process can get an exclusive lock for 1
 hour, it stops the server. The next client starts a new server.
 
+kotlin-lsp deletes its Gradle init scripts after each import. If the init script is missing, the
+watch process writes it again. Thus the next import of the server also gets the library sources.
+
 In `nowinandroid`, a new start takes about 15 s until the server is ready. A server uses about
 1.5 GB of memory.
 

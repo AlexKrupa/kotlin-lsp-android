@@ -264,6 +264,21 @@ class LibrarySourcesTest : FixtureBuildTest() {
         assertEquals(oldModified, workspaceFile.lastModified())
     }
 
+    /** A new `workspace.json` makes the server import again, so a run with the same model must not write it. */
+    @Test
+    fun keepsWorkspaceFileWithSameContent() {
+        val projectDir = copyFixture("jvm-only")
+        val outputDir = File(tempDir, "out")
+        runInitScript(projectDir, outputDir)
+        val workspaceFile = File(outputDir, "library-sources/workspace.json")
+        val past = workspaceFile.lastModified() - 3_600_000
+        workspaceFile.setLastModified(past)
+
+        runInitScript(projectDir, outputDir)
+
+        assertEquals(past, workspaceFile.lastModified())
+    }
+
     @Test
     fun writesPathsWithSpaces() {
         val parent = File(tempDir, "with space ą")
