@@ -91,6 +91,17 @@ compiles only the build logic. With a warm Gradle daemon and no changes, it take
 A missing library fails the task graph of `lspRClassJars`. Thus the import does not run it, and the
 separate run ignores its failure. Then the server starts with no R jar.
 
+The import of kotlin-lsp puts no R jar of a library module on the classpath. See kotlin-lsp issue
+[#280](https://github.com/Kotlin/kotlin-lsp/issues/280). Thus `lspRClassJars` also runs
+`generate<Variant>RFile` for the selected variant of each library module. It copies the jar to
+`<cache>/r-jars/<project path>/R.jar`. A jar in the build folder fails the import: Gradle finds the
+output of a task that no task in the import depends on.
+
+The init script adds the copied jars to `<variant>CompileOnly` of each Android module, and to the
+`CompileOnly` configurations of its unit tests and instrumented tests. A module gets the same R
+classes as on its Gradle compile classpath: its own jar, the jars of its direct project
+dependencies, and then only the jars of their `api` dependencies.
+
 `cmd` also has workarounds for library locations. They use only the sources in `workspace.json`:
 
 - Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for
@@ -288,6 +299,7 @@ Files in `<cache root>/<key>/`:
 | `lsp-library-sources.gradle` | The init script that the binary writes at each start |
 | `ScriptModel.java` | The Tooling API client of `script-model`. If the content is different, a run writes it again. |
 | `script-model.lock` | Lock that allows one `script-model` run at a time. A second run waits. |
+| `r-jars/<project path>/R.jar` | Copies of the R jars of the library modules |
 | `library-sources/workspace.json` | The libraries with their sources, for the server |
 | `library-sources/gradle-home.txt` | The Gradle distribution of the build, for `script-model` |
 | `library-sources/gradle-scripts.json` | The script model: the source path, the implicit imports, and the plugin classes of each script |
@@ -317,10 +329,11 @@ Files in `<cache root>/`, shared by all roots:
   in a Neovim session takes about 1 s: it reads the package lists of the jars and the package of
   each source file. A next lookup takes less than 0.1 s. The references do one lookup for each match
   of the name, for example 1.8 s for the 31 matches of `namespace`.
-- No `R` class in library modules (kotlin-lsp issue #280).
-- After a `clean` or a new resource, the `R` class changes only after a Gradle build of the app
-  and the next server start. An import that changes the jar has no effect, because the server
-  reads it only at its start.
+- After a `clean` or a new resource, the `R` class of an app changes only after a Gradle build of
+  the app and the next server start. An import that changes the jar has no effect, because the
+  server reads it only at its start.
+- The `R` class of a library changes only after the next separate run: `kotlin-lsp variant set`,
+  or the first start after you delete the cache folder of the root.
 - No fixes or patches for `kotlin-lsp`: the repo only works around it.
 
 ## Tests

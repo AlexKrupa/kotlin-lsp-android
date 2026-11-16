@@ -520,6 +520,66 @@ void addRClassJar(Project project, Provider<String> selectedVariant) {
     }
 }
 
+// The import of kotlin-lsp puts no R jar of a library on the classpath. A jar in the build folder
+// fails the import, because Gradle finds the output of a task that no task depends on. Thus the
+// separate run copies the jar to the output folder.
+void copyLibraryRClassJar(Project project, Provider<String> selectedVariant) {
+    def copy = project.tasks.register('lspRClassJar', Sync) { task ->
+        task.from({
+            def name = selectedVariant.map { "generate${it.capitalize()}RFile".toString() }.getOrElse('')
+            project.tasks.named({ it == name } as Spec<String>).collect { it.getRClassOutputJar() }
+        })
+        task.into(project.providers.environmentVariable('KOTLIN_LSP_ANDROID_OUTPUT').map { new File(it, rClassJarDir(project)) })
+    }
+    project.rootProject.tasks.named('lspRClassJars') { it.dependsOn(copy) }
+}
+
+String rClassJarDir(Project project) {
+    return "r-jars${project.buildTreePath.replace(':', '/')}"
+}
+
+// The same R classes as on the compile classpath of Gradle: the module, its direct project
+// dependencies, then only their `api` dependencies.
+void addRClassJarsToClasspath(Project project) {
+    def outputDir = project.providers.environmentVariable('KOTLIN_LSP_ANDROID_OUTPUT')
+    def androidComponents = project.extensions.getByName('androidComponents')
+    androidComponents.onVariants(androidComponents.selector().all(), { variant ->
+        ([variant] + variant.nestedComponents).each { component ->
+            def jars = project.files({
+                rClassProjects(project, component.compileConfiguration)
+                    .collect { new File(outputDir.get(), "${rClassJarDir(it)}/R.jar") }
+                    .findAll { it.isFile() }
+            })
+            // A nested component `<variant>UnitTest` has the configuration `test<Variant>CompileOnly`.
+            def prefix = component.name.substring(variant.name.length()).uncapitalize()
+            def name = "${prefix == 'unitTest' ? 'test' : prefix}${prefix ? variant.name.capitalize() : variant.name}CompileOnly".toString()
+            project.configurations.named({ it == name } as Spec<String>).configureEach {
+                it.dependencies.add(project.dependencies.create(jars))
+            }
+        }
+    } as Action)
+}
+
+Set<Project> rClassProjects(Project project, Configuration compileClasspath) {
+    def projects = new LinkedHashSet<Project>([project])
+    def next = projectDependencies(project, compileClasspath)
+    while (!next.isEmpty()) {
+        def dependency = next.remove(0)
+        if (projects.add(dependency) && dependency.extensions.extraProperties.has('lspSelectedVariant')) {
+            def variant = dependency.extensions.extraProperties.get('lspSelectedVariant').getOrNull()
+            def apiElements = dependency.configurations.findByName("${variant}ApiElements")
+            if (apiElements != null) {
+                next.addAll(projectDependencies(dependency, apiElements))
+            }
+        }
+    }
+    return projects
+}
+
+List<Project> projectDependencies(Project project, Configuration configuration) {
+    return configuration.allDependencies.withType(ProjectDependency).collect { project.project(it.path) }
+}
+
 // A missing SDK platform makes the AGP providers fail. The import must not fail, so the libraries
 // go in with no SDK. The source folder is only a candidate here: the merge looks for it each time,
 // so that a download after this task shows in the next import.
@@ -593,8 +653,12 @@ gradle.allprojects { project ->
         project.pluginManager.withPlugin(pluginId) {
             try {
                 def selectedVariant = registerAndroidModuleTask(project)
+                project.extensions.extraProperties.set('lspSelectedVariant', selectedVariant)
+                addRClassJarsToClasspath(project)
                 if (pluginId == 'com.android.application') {
                     addRClassJar(project, selectedVariant)
+                } else {
+                    copyLibraryRClassJar(project, selectedVariant)
                 }
             } catch (Throwable e) {
                 project.logger.warn("kotlin-lsp-android: cannot add the libraries of ${project.buildTreePath}", e)

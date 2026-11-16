@@ -118,6 +118,73 @@ class LibrarySourcesTest : FixtureBuildTest() {
     private fun workspace(outputDir: File): JsonObject =
         readJson(File(outputDir, "library-sources/workspace.json"))
 
+    private fun addStrings(moduleDir: File) {
+        File(moduleDir, "src/main/res/values/strings.xml").apply { parentFile.mkdirs() }
+            .writeText("<resources>\n    <string name=\"label\">Label</string>\n</resources>\n")
+    }
+
+    private fun addAndroidLibrary(projectDir: File, name: String, dependencies: String = "") {
+        File(projectDir, "$name/build.gradle.kts").apply { parentFile.mkdirs() }.writeText(
+            """
+            plugins {
+                id("com.android.library")
+            }
+
+            android {
+                namespace = "com.example.$name"
+                compileSdk = 36
+                defaultConfig {
+                    minSdk = 24
+                }
+            }
+
+            dependencies {
+                $dependencies
+            }
+            """.trimIndent()
+        )
+        File(projectDir, "settings.gradle.kts").appendText("\ninclude(\":$name\")\n")
+    }
+
+    /** The file dependencies of the compile classpaths in the jar view, as the import of kotlin-lsp sees them. */
+    private fun compileFileDependencies(projectDir: File, outputDir: File, projectPaths: List<String>): Map<String, Map<String, Set<String>>> {
+        val script = File(tempDir, "file-dependencies.gradle")
+        script.writeText(
+            """
+            import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+            import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+
+            gradle.allprojects { p ->
+                p.tasks.register('writeFileDependencies') { task ->
+                    def output = p.layout.buildDirectory.file('file-dependencies.txt')
+                    def views = ['debugCompileClasspath', 'demoDebugCompileClasspath', 'debugUnitTestCompileClasspath', 'debugAndroidTestCompileClasspath']
+                        .collect { p.configurations.findByName(it) }
+                        .findAll { it != null }
+                        .collectEntries { configuration ->
+                            [(configuration.name): configuration.incoming.artifactView { view ->
+                                view.attributes { it.attribute(Attribute.of('artifactType', String), 'jar') }
+                                view.componentFilter { !(it instanceof ModuleComponentIdentifier || it instanceof ProjectComponentIdentifier) }
+                            }.files]
+                        }
+                    task.inputs.files(views.values())
+                    task.outputs.file(output)
+                    task.doLast {
+                        output.get().asFile.text = views.collect { name, files -> files.collect { "${'$'}name\t${'$'}it" } }.flatten().join('\n')
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+        runInitScript(projectDir, outputDir, listOf("-I", script.absolutePath) + projectPaths.map { "$it:writeFileDependencies" })
+        return projectPaths.associateWith { path ->
+            File(projectDir, "${path.removePrefix(":").replace(':', '/')}/build/file-dependencies.txt").readLines()
+                .filter { it.isNotEmpty() }
+                .map { it.split("\t") }
+                .groupBy({ it[0] }, { it[1] })
+                .mapValues { it.value.toSet() }
+        }
+    }
+
     @Test
     fun selectsShortestDebugVariantByDefault() {
         val projectDir = copyFixture("android")
@@ -185,6 +252,45 @@ class LibrarySourcesTest : FixtureBuildTest() {
         val rClassJar = File(rClassJars, "prodDebug/processProdDebugResources/R.jar")
         assertTrue("com/example/app/R\$string.class" in jarEntryNames(rClassJar.path), jarEntryNames(rClassJar.path).toString())
         assertEquals(listOf("prodDebug"), rClassJars.list()?.toList())
+    }
+
+    @Test
+    fun copiesRClassJarsOfLibraries() {
+        val projectDir = copyFixture("android")
+        addStrings(File(projectDir, "lib"))
+        val outputDir = File(tempDir, "out")
+
+        runInitScript(projectDir, outputDir, listOf("lspRClassJars"))
+
+        val rClassJar = File(outputDir, "r-jars/lib/R.jar")
+        assertTrue("com/example/lib/R\$string.class" in jarEntryNames(rClassJar.path), jarEntryNames(rClassJar.path).toString())
+    }
+
+    @Test
+    fun addsRClassJarsOfModuleAndApiDependencies() {
+        val projectDir = copyFixture("android")
+        addAndroidLibrary(projectDir, "internal")
+        addAndroidLibrary(projectDir, "base", "implementation(project(\":internal\"))")
+        addAndroidLibrary(projectDir, "testing")
+        File(projectDir, "lib/build.gradle.kts").appendText(
+            "\ndependencies {\n    api(project(\":base\"))\n    testImplementation(project(\":testing\"))\n" +
+                "    androidTestImplementation(project(\":testing\"))\n}\n"
+        )
+        val outputDir = File(tempDir, "out")
+        val jars = listOf("lib", "base", "internal", "testing").associateWith { File(outputDir, "r-jars/$it/R.jar") }
+        jars.values.forEach { writeJar(it) }
+
+        val files = compileFileDependencies(projectDir, outputDir, listOf(":app", ":lib", ":base"))
+
+        val app = files.getValue(":app")
+        val lib = files.getValue(":lib")
+        val base = files.getValue(":base")
+        assertEquals(setOf(jars.getValue("lib").path, jars.getValue("base").path), app["demoDebugCompileClasspath"])
+        assertEquals(setOf(jars.getValue("lib").path, jars.getValue("base").path), lib["debugCompileClasspath"])
+        val withTesting = setOf(jars.getValue("lib").path, jars.getValue("base").path, jars.getValue("testing").path)
+        assertEquals(withTesting, lib["debugUnitTestCompileClasspath"])
+        assertEquals(withTesting, lib["debugAndroidTestCompileClasspath"])
+        assertEquals(setOf(jars.getValue("base").path, jars.getValue("internal").path), base["debugCompileClasspath"])
     }
 
     @Test
