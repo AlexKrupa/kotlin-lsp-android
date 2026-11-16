@@ -640,6 +640,7 @@ local function find_unpositioned(symbol, model, params, root_dir, lines)
   local function find()
     return find_implicitly_imported(symbol, model)
       or find_accessor(symbol, model)
+      -- Step 6: `workspace/symbol`.
       or sources.find_in_other_libraries({ symbol }, params, root_dir, lines)
   end
   if not unpositioned_by_source_path then
