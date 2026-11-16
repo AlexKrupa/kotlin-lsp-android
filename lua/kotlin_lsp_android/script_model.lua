@@ -62,9 +62,13 @@ function M.refresh(root_dir)
   end
 end
 
+local function library_sources_dir(root_dir)
+  return require('kotlin_lsp_android.sources').cache_dir(root_dir) .. '/library-sources'
+end
+
 ---@return table? model decoded file, nil if the file is missing or invalid
 local function read_model(root_dir)
-  local path = require('kotlin_lsp_android.sources').cache_dir(root_dir) .. '/library-sources/gradle-scripts.json'
+  local path = library_sources_dir(root_dir) .. '/gradle-scripts.json'
   local stat = vim.uv.fs_stat(path)
   if not stat then
     return nil
@@ -93,7 +97,9 @@ end
 function M.get(root_dir, script_path)
   local model = read_model(root_dir)
   if not model then
-    if not failed_roots[root_dir] and not running_roots[root_dir] then
+    -- The run needs the Gradle home from the import. The refresh at the end of the import starts it.
+    local imported = vim.uv.fs_stat(library_sources_dir(root_dir) .. '/gradle-home.txt') ~= nil
+    if imported and not failed_roots[root_dir] and not running_roots[root_dir] then
       M.refresh(root_dir)
     end
     return nil

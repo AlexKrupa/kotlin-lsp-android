@@ -54,6 +54,12 @@ local function write_model(root_dir)
   vim.fn.writefile({ vim.fn.readblob(work_dir .. '/model.json') }, model_path(root_dir))
 end
 
+-- The import writes it. `kotlin-lsp script-model` needs it.
+local function write_gradle_home(root_dir)
+  vim.fn.mkdir(vim.fs.dirname(model_path(root_dir)), 'p')
+  vim.fn.writefile({ '/gradle/home' }, vim.fs.dirname(model_path(root_dir)) .. '/gradle-home.txt')
+end
+
 local function call_count()
   return vim.fn.filereadable(work_dir .. '/calls') == 1 and #vim.fn.readfile(work_dir .. '/calls') or 0
 end
@@ -108,6 +114,7 @@ assert_equal(call_count(), 0, 'calls after get of an unknown script')
 local missing_root = new_root('missing')
 local missing_script = missing_root .. '/build.gradle.kts'
 set_model(assert(vim.uv.fs_realpath(missing_script)))
+write_gradle_home(missing_root)
 assert(script_model.get(missing_root, missing_script) == nil, 'get with no file is not nil')
 assert(vim.wait(5000, function()
   return script_model.get(missing_root, missing_script) ~= nil
@@ -119,13 +126,20 @@ assert_equal(call_count(), 1, 'calls after a missing file')
 local invalid_root = new_root('invalid')
 local invalid_script = invalid_root .. '/build.gradle.kts'
 set_model(assert(vim.uv.fs_realpath(invalid_script)))
-vim.fn.mkdir(vim.fs.dirname(model_path(invalid_root)), 'p')
+write_gradle_home(invalid_root)
 vim.fn.writefile({ '{ "lists": [[' }, model_path(invalid_root))
 assert(script_model.get(invalid_root, invalid_script) == nil, 'get with invalid JSON is not nil')
 assert(vim.wait(5000, function()
   return script_model.get(invalid_root, invalid_script) ~= nil
 end), 'get returns nil after the run')
 assert_equal(call_count(), 2, 'calls after invalid JSON')
+
+-- Before the first import: no run and no warning.
+local before_import_root = new_root('before-import')
+assert(script_model.get(before_import_root, before_import_root .. '/build.gradle.kts') == nil, 'get before the import is not nil')
+vim.wait(500)
+assert_equal(call_count(), 2, 'calls after get before the import')
+assert_equal(warnings, {}, 'warnings after get before the import')
 
 -- Three refresh calls before the end of the first run: one more run after the first run.
 local twice_root = new_root('twice')
