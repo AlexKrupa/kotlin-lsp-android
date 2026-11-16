@@ -34,8 +34,11 @@ func Env(cacheDir, scriptPath string, serverOptions ...string) []string {
 		"ORG_GRADLE_PROJECT_android.onlyEnableUnitTestForTheTestedBuildType": "false",
 		"KOTLIN_LSP_ANDROID_OUTPUT": cacheDir,
 		"KOTLIN_LSP_GRADLE_SOURCES": filepath.Join(root.CacheRoot(), "gradle-sources"),
+		// omit_all_tasks: like Android Studio, the sync creates no tasks. Some AGP tasks fail at creation,
+		// for example the Compose Preview task of a module with no unit tests.
 		"JAVA_TOOL_OPTIONS": appendOptions(os.Getenv("JAVA_TOOL_OPTIONS"),
-			"-Dorg.gradle.isolated-projects=false"),
+			"-Dorg.gradle.isolated-projects=false",
+			"-Dorg.gradle.internal.GradleProjectBuilderOptions=omit_all_tasks"),
 		"IJ_JAVA_OPTIONS": appendOptions(os.Getenv("IJ_JAVA_OPTIONS"),
 			append([]string{"-Dcom.jetbrains.ls.imports.gradle.init.scripts=" + scriptPath}, serverOptions...)...),
 	}

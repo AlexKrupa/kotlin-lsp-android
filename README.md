@@ -74,6 +74,11 @@ progress "Starting kotlin-lsp" (`$/progress`) until the response to `initialize`
 cannot start the server, it sends the error as `window/showMessage` and exits. Neovim shows the
 error with `vim.notify`.
 
+Like Android Studio, the Gradle import of the server creates no tasks. The binary sets
+`-Dorg.gradle.internal.GradleProjectBuilderOptions=omit_all_tasks` in `JAVA_TOOL_OPTIONS`. Without
+it, the import fails on AGP tasks that fail at creation, for example the Compose Preview task of a
+module with no unit tests.
+
 `cmd` also has workarounds for library locations. They use only the sources in `workspace.json`:
 
 - Sometimes kotlin-lsp locates a symbol in a class file, although `workspace.json` has sources for

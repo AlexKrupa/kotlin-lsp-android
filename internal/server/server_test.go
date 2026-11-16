@@ -227,13 +227,15 @@ func countEntries(env []string, name string) int {
 	return count
 }
 
+const gradleOptions = "-Dorg.gradle.isolated-projects=false -Dorg.gradle.internal.GradleProjectBuilderOptions=omit_all_tasks"
+
 func TestEnvAppendsToExistingOptions(t *testing.T) {
 	t.Setenv("JAVA_TOOL_OPTIONS", "-Xmx1g")
 	t.Setenv("IJ_JAVA_OPTIONS", "-Da=b")
 
 	env := Env(t.TempDir(), "/cache/script.gradle")
 
-	if got, _ := envValue(env, "JAVA_TOOL_OPTIONS"); got != "-Xmx1g -Dorg.gradle.isolated-projects=false" {
+	if got, _ := envValue(env, "JAVA_TOOL_OPTIONS"); got != "-Xmx1g "+gradleOptions {
 		t.Errorf("JAVA_TOOL_OPTIONS = %q", got)
 	}
 	if got, _ := envValue(env, "IJ_JAVA_OPTIONS"); got != "-Da=b -Dcom.jetbrains.ls.imports.gradle.init.scripts=/cache/script.gradle" {
@@ -252,7 +254,7 @@ func TestEnvSetsOptionsWithoutParentValues(t *testing.T) {
 
 	env := Env(t.TempDir(), "/cache/script.gradle")
 
-	if got, _ := envValue(env, "JAVA_TOOL_OPTIONS"); got != "-Dorg.gradle.isolated-projects=false" {
+	if got, _ := envValue(env, "JAVA_TOOL_OPTIONS"); got != gradleOptions {
 		t.Errorf("JAVA_TOOL_OPTIONS = %q", got)
 	}
 	if got, _ := envValue(env, "IJ_JAVA_OPTIONS"); got != "-Dcom.jetbrains.ls.imports.gradle.init.scripts=/cache/script.gradle" {
