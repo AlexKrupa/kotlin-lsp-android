@@ -227,7 +227,7 @@ func countEntries(env []string, name string) int {
 	return count
 }
 
-const gradleOptions = "-Dorg.gradle.isolated-projects=false -Dorg.gradle.internal.GradleProjectBuilderOptions=omit_all_tasks"
+const gradleOptions = "-Dorg.gradle.isolated-projects=false"
 
 func TestEnvAppendsToExistingOptions(t *testing.T) {
 	t.Setenv("JAVA_TOOL_OPTIONS", "-Xmx1g")
