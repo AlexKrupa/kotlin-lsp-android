@@ -26,7 +26,8 @@ The repo only works around kotlin-lsp. It does not fix or patch it.
 - Neovim 0.11 or later, with `zip`, `unzip`, and `rg` on PATH.
 - Go, to build the binary.
 - The `android` CLI on PATH, for the background download of the Android SDK sources.
-- `java` 17 or later on PATH, for the model of the `.gradle.kts` files.
+- Java 17 or later, for the model of the `.gradle.kts` files: the JDK of the `java-home` key or
+  of `JAVA_HOME`, or else `java` on PATH.
 
 ## Install
 
@@ -98,11 +99,13 @@ line is `key=value`. A line that starts with `#` is a comment.
 
 ```properties
 heap=6g
+java-home=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
 ```
 
 | Key | Value | Default |
 | --- | --- | --- |
 | `heap` | Maximum heap of the server, in the format of `-Xmx`, for example `6g` or `4096m`. The binary adds `-Xmx<heap>` to `IJ_JAVA_OPTIONS` of the server, not of Gradle. | 2 GB, from `-Xmx2048m` in the `intellij-server.vmoptions` file of Homebrew |
+| `java-home` | The JDK of all Gradle runs of the root: the import of the server, the library sources, and the model of the `.gradle.kts` files. The folder must contain `bin/java`. | `JAVA_HOME` of the client that starts the server. Without it, kotlin-lsp takes the newest installed JDK that the Gradle version supports. |
 
 The binary reads the file at each start of a server. A change applies after the next idle stop or a
 stop of the server. If the file has an unknown key or an invalid value, the client does not start

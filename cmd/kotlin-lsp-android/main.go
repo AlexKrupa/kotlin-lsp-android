@@ -119,11 +119,7 @@ func startServer(rootPath string) (net.Conn, []lsp.Project, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	var serverOptions []string
-	if read.Heap != "" {
-		serverOptions = append(serverOptions, "-Xmx"+read.Heap)
-	}
-	env := server.Env(cacheDir, scriptPath, serverOptions...)
+	env := server.Env(cacheDir, scriptPath, read)
 	prepare := func() {
 		if sources.Exists(cacheDir) {
 			return

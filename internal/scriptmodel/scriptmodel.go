@@ -13,6 +13,7 @@ import (
 	"time"
 
 	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/properties"
 )
 
 const stderrLineCount = 20
@@ -42,9 +43,9 @@ func Run(root, cacheDir string) error {
 		return nil
 	}
 
-	javaPath, err := exec.LookPath("java")
+	javaPath, err := findJava(root)
 	if err != nil {
-		return fmt.Errorf("find java on PATH: %w", err)
+		return err
 	}
 	clientPath, err := initscript.WriteClient(cacheDir)
 	if err != nil {
@@ -74,6 +75,23 @@ func Run(root, cacheDir string) error {
 		return fmt.Errorf("rename %s to %s: %w", output.Name(), modelPath, err)
 	}
 	return nil
+}
+
+// findJava gives the java of the JDK of the import, because without a Java home the Tooling API
+// runs Gradle with the JVM of the client.
+func findJava(root string) (string, error) {
+	read, err := properties.Read(root)
+	if err != nil {
+		return "", err
+	}
+	if read.JavaHome != "" {
+		return filepath.Join(read.JavaHome, "bin", "java"), nil
+	}
+	javaPath, err := exec.LookPath("java")
+	if err != nil {
+		return "", fmt.Errorf("find java on PATH: %w", err)
+	}
+	return javaPath, nil
 }
 
 // lockFile waits until it holds the lock. The caller closes the file to release the lock.

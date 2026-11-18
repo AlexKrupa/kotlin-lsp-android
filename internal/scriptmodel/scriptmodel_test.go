@@ -27,6 +27,7 @@ func useFakeJava(t *testing.T, script string) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir)
+	t.Setenv("JAVA_HOME", "")
 }
 
 func newCache(t *testing.T) (cacheDir, folder string) {
@@ -88,6 +89,26 @@ func TestRunCallsClientWithGradleLib(t *testing.T) {
 	}
 	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
 		t.Fatalf("temporary output %s still exists: %v", outputPath, err)
+	}
+}
+
+func TestRunUsesJavaOfJavaHome(t *testing.T) {
+	useFakeJava(t, failingJava)
+	javaHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(javaHome, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(javaHome, "bin", "java"), []byte(recordingJava), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JAVA_HOME", javaHome)
+	cacheDir, folder := newCache(t)
+	writeGradleHome(t, folder, "/gradle/home")
+
+	err := Run(t.TempDir(), cacheDir)
+
+	if err != nil {
+		t.Fatalf("Run returned error %v, want the java of JAVA_HOME, not the failing java on PATH", err)
 	}
 }
 

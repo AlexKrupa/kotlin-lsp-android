@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/properties"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/root"
 )
 
@@ -27,17 +28,23 @@ const (
 // startTimeout is a variable so that tests can make it shorter.
 var startTimeout = 300 * time.Second
 
-// Env gives the environment of the server, with serverOptions as JVM options of the server, not of
-// Gradle.
-func Env(cacheDir, scriptPath string, serverOptions ...string) []string {
+// Env gives the environment of the server and of Gradle. The heap applies only to the server.
+func Env(cacheDir, scriptPath string, read properties.Properties) []string {
+	serverOptions := []string{"-Dcom.jetbrains.ls.imports.gradle.init.scripts=" + scriptPath}
+	if read.Heap != "" {
+		serverOptions = append(serverOptions, "-Xmx"+read.Heap)
+	}
 	set := map[string]string{
 		"ORG_GRADLE_PROJECT_android.onlyEnableUnitTestForTheTestedBuildType": "false",
 		"KOTLIN_LSP_ANDROID_OUTPUT": cacheDir,
 		"KOTLIN_LSP_GRADLE_SOURCES": filepath.Join(root.CacheRoot(), "gradle-sources"),
 		"JAVA_TOOL_OPTIONS":         appendOptions(os.Getenv("JAVA_TOOL_OPTIONS"), "-Dorg.gradle.isolated-projects=false"),
-		"IJ_JAVA_OPTIONS": appendOptions(os.Getenv("IJ_JAVA_OPTIONS"),
-			append([]string{"-Dcom.jetbrains.ls.imports.gradle.init.scripts=" + scriptPath}, serverOptions...)...),
 	}
+	if read.JavaHome != "" {
+		serverOptions = append(serverOptions, "-Dcom.jetbrains.ls.imports.gradle.java.home="+read.JavaHome)
+		set["JAVA_HOME"] = read.JavaHome
+	}
+	set["IJ_JAVA_OPTIONS"] = appendOptions(os.Getenv("IJ_JAVA_OPTIONS"), serverOptions...)
 	// The variant file is the only source: an inherited value must not stay.
 	content, err := os.ReadFile(filepath.Join(cacheDir, "variant"))
 	if err == nil {

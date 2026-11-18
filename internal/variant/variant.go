@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	initscript "github.com/AlexKrupa/kotlin-lsp-android/gradle"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/properties"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/server"
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/sources"
 )
@@ -40,6 +41,10 @@ func Set(root, cacheDir, name string) error {
 	if err != nil {
 		return err
 	}
+	read, err := properties.Read(root)
+	if err != nil {
+		return err
+	}
 	if !slices.Contains(names, name) {
 		return fmt.Errorf("unknown variant %q, known variants: %s", name, strings.Join(names, ", "))
 	}
@@ -51,6 +56,6 @@ func Set(root, cacheDir, name string) error {
 	if err != nil {
 		return err
 	}
-	prepareErr := sources.Prepare(root, scriptPath, server.Env(cacheDir, scriptPath))
+	prepareErr := sources.Prepare(root, scriptPath, server.Env(cacheDir, scriptPath, read))
 	return errors.Join(prepareErr, server.Stop(cacheDir))
 }

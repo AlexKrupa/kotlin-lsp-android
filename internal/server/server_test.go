@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AlexKrupa/kotlin-lsp-android/internal/lsp"
+	"github.com/AlexKrupa/kotlin-lsp-android/internal/properties"
 )
 
 func TestMain(m *testing.M) {
@@ -233,7 +234,7 @@ func TestEnvAppendsToExistingOptions(t *testing.T) {
 	t.Setenv("JAVA_TOOL_OPTIONS", "-Xmx1g")
 	t.Setenv("IJ_JAVA_OPTIONS", "-Da=b")
 
-	env := Env(t.TempDir(), "/cache/script.gradle")
+	env := Env(t.TempDir(), "/cache/script.gradle", properties.Properties{})
 
 	if got, _ := envValue(env, "JAVA_TOOL_OPTIONS"); got != "-Xmx1g "+gradleOptions {
 		t.Errorf("JAVA_TOOL_OPTIONS = %q", got)
@@ -252,7 +253,7 @@ func TestEnvSetsOptionsWithoutParentValues(t *testing.T) {
 	t.Setenv("JAVA_TOOL_OPTIONS", "")
 	t.Setenv("IJ_JAVA_OPTIONS", "")
 
-	env := Env(t.TempDir(), "/cache/script.gradle")
+	env := Env(t.TempDir(), "/cache/script.gradle", properties.Properties{})
 
 	if got, _ := envValue(env, "JAVA_TOOL_OPTIONS"); got != gradleOptions {
 		t.Errorf("JAVA_TOOL_OPTIONS = %q", got)
@@ -265,10 +266,27 @@ func TestEnvSetsOptionsWithoutParentValues(t *testing.T) {
 func TestEnvAddsServerOptions(t *testing.T) {
 	t.Setenv("IJ_JAVA_OPTIONS", "-Da=b")
 
-	env := Env(t.TempDir(), "/cache/script.gradle", "-Xmx6g")
+	env := Env(t.TempDir(), "/cache/script.gradle", properties.Properties{Heap: "6g"})
 
 	if got, _ := envValue(env, "IJ_JAVA_OPTIONS"); got != "-Da=b -Dcom.jetbrains.ls.imports.gradle.init.scripts=/cache/script.gradle -Xmx6g" {
 		t.Fatalf("IJ_JAVA_OPTIONS = %q", got)
+	}
+}
+
+func TestEnvSetsJavaHome(t *testing.T) {
+	t.Setenv("JAVA_HOME", "/inherited/jdk")
+	t.Setenv("IJ_JAVA_OPTIONS", "")
+
+	env := Env(t.TempDir(), "/cache/script.gradle", properties.Properties{JavaHome: "/zulu-21"})
+
+	if got, _ := envValue(env, "IJ_JAVA_OPTIONS"); got != "-Dcom.jetbrains.ls.imports.gradle.init.scripts=/cache/script.gradle -Dcom.jetbrains.ls.imports.gradle.java.home=/zulu-21" {
+		t.Errorf("IJ_JAVA_OPTIONS = %q", got)
+	}
+	if got, _ := envValue(env, "JAVA_HOME"); got != "/zulu-21" {
+		t.Errorf("JAVA_HOME = %q, want /zulu-21", got)
+	}
+	if count := countEntries(env, "JAVA_HOME"); count != 1 {
+		t.Errorf("JAVA_HOME appears %d times, want 1", count)
 	}
 }
 
@@ -278,7 +296,7 @@ func TestEnvSetsPathsAndFlags(t *testing.T) {
 	t.Setenv("KOTLIN_LSP_ANDROID_OUTPUT", "/stale")
 	cacheDir := filepath.Join(cacheRoot, "abc")
 
-	env := Env(cacheDir, "/cache/script.gradle")
+	env := Env(cacheDir, "/cache/script.gradle", properties.Properties{})
 
 	want := map[string]string{
 		"ORG_GRADLE_PROJECT_android.onlyEnableUnitTestForTheTestedBuildType": "false",
@@ -302,7 +320,7 @@ func TestEnvSetsVariantFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env := Env(cacheDir, "/cache/script.gradle")
+	env := Env(cacheDir, "/cache/script.gradle", properties.Properties{})
 
 	if got, _ := envValue(env, "LSP_ANDROID_VARIANT"); got != "prodDebug" {
 		t.Errorf("LSP_ANDROID_VARIANT = %q, want prodDebug", got)
@@ -315,7 +333,7 @@ func TestEnvSetsVariantFromFile(t *testing.T) {
 func TestEnvOmitsVariantWithoutFile(t *testing.T) {
 	t.Setenv("LSP_ANDROID_VARIANT", "inherited")
 
-	env := Env(t.TempDir(), "/cache/script.gradle")
+	env := Env(t.TempDir(), "/cache/script.gradle", properties.Properties{})
 
 	if got, found := envValue(env, "LSP_ANDROID_VARIANT"); found {
 		t.Errorf("LSP_ANDROID_VARIANT = %q, want it not set", got)
